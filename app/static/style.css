@@ -1,0 +1,148 @@
+:root {
+  --bg: #14171c;
+  --panel: #1c2027;
+  --line: #2c323c;
+  --fg: #e6e9ef;
+  --muted: #8d97a8;
+  --accent: #4da3ff;
+  --danger: #ff6b6b;
+  --ok: #2fbf71;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; height: 100%;
+  background: var(--bg); color: var(--fg);
+  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.spacer { flex: 1; }
+.muted { color: var(--muted); font-weight: 400; }
+
+/* --- drop zone --- */
+.drop {
+  position: fixed; inset: 0; display: grid; place-items: center;
+  text-align: center; padding: 2rem;
+}
+.drop-inner {
+  border: 2px dashed var(--line); border-radius: 14px;
+  padding: 3rem 3.5rem; max-width: 560px;
+  transition: border-color .15s, background .15s;
+}
+.drop.over .drop-inner { border-color: var(--accent); background: #1a2331; }
+.drop h1 { margin: 0 0 .5rem; font-size: 1.6rem; font-weight: 600; }
+.drop p { margin: .5rem 0; color: var(--muted); }
+.link { color: var(--accent); cursor: pointer; text-decoration: underline; }
+.hint { font-size: 12.5px; color: var(--muted); }
+.hint.warn { color: #e0a33e; }
+
+/* --- layout --- */
+/* A bare `main { display:flex }` outranks the UA's [hidden] rule, so the
+   editor would stay laid out underneath the drop zone. */
+main[hidden] { display: none; }
+main { display: flex; height: 100%; }
+.stage { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+.toolbar, .statusbar {
+  display: flex; align-items: center; gap: .75rem;
+  padding: .5rem .8rem; background: var(--panel);
+  border-bottom: 1px solid var(--line); flex-wrap: wrap;
+}
+.statusbar {
+  border-bottom: none; border-top: 1px solid var(--line);
+  font-size: 12.5px; color: var(--muted);
+}
+.file-name { font-weight: 600; }
+.chk { display: flex; align-items: center; gap: .35rem; color: var(--muted); font-size: 13px; }
+
+#svg { flex: 1; width: 100%; background: #0f1216; touch-action: none; cursor: grab; }
+#svg.panning { cursor: grabbing; }
+
+/* --- panel --- */
+.panel {
+  width: 330px; flex-shrink: 0; overflow-y: auto;
+  background: var(--panel); border-left: 1px solid var(--line);
+}
+.panel section { padding: .9rem 1rem; border-bottom: 1px solid var(--line); }
+.panel h2 {
+  margin: 0 0 .6rem; font-size: 11px; font-weight: 700;
+  letter-spacing: .09em; text-transform: uppercase; color: var(--muted);
+}
+.panel label {
+  display: block; margin: .55rem 0; font-size: 12.5px; color: var(--muted);
+}
+.panel input[type=range] { width: 100%; margin-top: .25rem; accent-color: var(--accent); }
+.panel select, .panel input[type=number], .panel input[type=text] {
+  width: 100%; margin-top: .25rem; padding: .4rem .5rem;
+  background: #12151a; color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px; font-size: 13px;
+}
+.val { float: right; color: var(--fg); font-variant-numeric: tabular-nums; }
+details summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margin: .6rem 0; }
+
+button {
+  width: 100%; padding: .5rem .7rem; margin-top: .5rem;
+  background: #262c36; color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px;
+  font-size: 13px; cursor: pointer;
+}
+button:hover:not(:disabled) { background: #2f3743; }
+button:disabled { opacity: .4; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #06121f; font-weight: 600; }
+button.primary:hover { background: #6bb4ff; }
+button.danger { border-color: #5a2b2b; color: var(--danger); }
+button.danger:hover:not(:disabled) { background: #3a2020; }
+button.ghost { width: auto; margin: 0; padding: .3rem .6rem; font-size: 12.5px; }
+
+/* --- stats --- */
+.stats { display: grid; grid-template-columns: auto 1fr; gap: .25rem .8rem; font-size: 12.5px; }
+.stats dt, .stats .k { color: var(--muted); }
+.stats .v { text-align: right; font-variant-numeric: tabular-nums; }
+.stats .v.big { color: var(--ok); font-weight: 600; }
+
+/* --- path list --- */
+.path-list { max-height: 230px; overflow-y: auto; margin: .4rem 0; }
+.path-row {
+  display: flex; align-items: center; gap: .5rem;
+  padding: .3rem .45rem; border-radius: 5px; cursor: pointer; font-size: 12.5px;
+}
+.path-row:hover { background: #262c36; }
+.path-row.sel { background: #1d3450; color: #cfe6ff; }
+.path-row .len { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--muted); }
+.path-row.sel .len { color: #9ec8f5; }
+.path-row .tag {
+  font-size: 10px; padding: .05rem .3rem; border-radius: 3px;
+  background: #2b3240; color: var(--muted);
+}
+.path-row .del { color: var(--muted); padding: 0 .2rem; }
+.path-row .del:hover { color: var(--danger); }
+
+/* --- keys --- */
+.keys { display: grid; grid-template-columns: auto 1fr; gap: .2rem .7rem; margin: 0; font-size: 12px; }
+.keys dt { color: var(--fg); }
+.keys dd { margin: 0; color: var(--muted); }
+kbd {
+  background: #262c36; border: 1px solid var(--line); border-bottom-width: 2px;
+  border-radius: 4px; padding: 0 .25rem; font-size: 11px; font-family: inherit;
+}
+
+/* --- toast --- */
+.toast {
+  position: fixed; bottom: 1.2rem; left: 50%; transform: translateX(-50%);
+  background: #262c36; border: 1px solid var(--line); border-radius: 8px;
+  padding: .6rem 1rem; font-size: 13px; z-index: 50;
+  box-shadow: 0 8px 24px rgba(0,0,0,.5);
+}
+.toast.err { border-color: var(--danger); color: #ffc9c9; }
+
+/* --- svg pieces --- */
+.geom { fill: none; stroke: #2fbf71; stroke-linejoin: round; stroke-linecap: round; }
+.geom.sel { stroke: #4da3ff; }
+.geom-hit { fill: none; stroke: transparent; cursor: pointer; }
+.vert { fill: #0f1216; stroke: #4da3ff; }
+.vert:hover { fill: #4da3ff; }
+.vert.sel { fill: #ffd166; stroke: #ffd166; }
+.reject { fill: none; stroke: var(--danger); stroke-dasharray: 4 3; }
+.band { fill: rgba(77,163,255,.12); stroke: var(--accent); stroke-dasharray: 4 3; }

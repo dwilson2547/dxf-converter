@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dxf-converter</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 12 Q8 1 14 9' fill='none' stroke='%232fbf71' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="drop" class="drop">
+  <div class="drop-inner">
+    <h1>Scan &rarr; DXF</h1>
+    <p>Drop a scanned tracing here, or <label class="link" for="file">choose a file</label>.</p>
+    <input type="file" id="file" accept=".png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp" hidden>
+    <p class="hint">Scan at 300 DPI or better. Scale is read from the image, so the
+       part lands in CAD at its real size.</p>
+  </div>
+</div>
+
+<main id="editor" hidden>
+  <div class="stage">
+    <div class="toolbar">
+      <span class="file-name" id="fileName"></span>
+      <span class="spacer"></span>
+      <label class="chk"><input type="checkbox" id="showScan" checked> Scan</label>
+      <label class="chk"><input type="checkbox" id="showRejects"> Removed</label>
+      <label class="chk"><input type="checkbox" id="showVerts" checked> Points</label>
+      <button id="zoomFit" class="ghost">Fit</button>
+      <button id="undo" class="ghost" title="Ctrl+Z">Undo</button>
+      <button id="redo" class="ghost" title="Ctrl+Shift+Z">Redo</button>
+      <button id="newFile" class="ghost">New scan</button>
+    </div>
+    <svg id="svg"></svg>
+    <div class="statusbar">
+      <span id="status">Ready</span>
+      <span class="spacer"></span>
+      <span id="coords" class="mono"></span>
+    </div>
+  </div>
+
+  <aside class="panel">
+    <section>
+      <h2>Result</h2>
+      <div id="stats" class="stats"></div>
+    </section>
+
+    <section>
+      <h2>Paths <span class="muted" id="pathCount"></span></h2>
+      <p class="hint">Shortest first &mdash; leftover dirt sorts to the top.
+         Click to select, <kbd>Del</kbd> to remove.</p>
+      <div id="pathList" class="path-list"></div>
+      <button id="delSelected" class="danger" disabled>Delete selected</button>
+    </section>
+
+    <section>
+      <h2>Detection</h2>
+      <label>Mode
+        <select id="mode">
+          <option value="outline">Outline — both stroke edges</option>
+          <option value="centerline">Centreline — one curve per stroke</option>
+        </select>
+      </label>
+      <p class="hint" id="modeHint"></p>
+
+      <label>Min length <span class="val" id="minLengthVal"></span>
+        <input type="range" id="min_length_mm" min="0" max="30" step="0.5"></label>
+      <label>Border margin <span class="val" id="borderVal"></span>
+        <input type="range" id="border_margin_mm" min="0" max="20" step="0.5"></label>
+      <label>Simplify <span class="val" id="simplifyVal"></span>
+        <input type="range" id="simplify_mm" min="0" max="0.5" step="0.01"></label>
+      <label>Smooth <span class="val" id="smoothVal"></span>
+        <input type="range" id="smooth_mm" min="0" max="3" step="0.1"></label>
+
+      <details>
+        <summary>Advanced</summary>
+        <label>Threshold
+          <select id="threshold">
+            <option value="otsu">Otsu (default)</option>
+            <option value="adaptive">Adaptive — uneven lighting</option>
+            <option value="fixed">Fixed</option>
+          </select></label>
+        <label>Flatten <span class="val" id="flattenVal"></span>
+          <input type="range" id="flatten_mm" min="0" max="10" step="0.5"></label>
+        <label>Close gaps <span class="val" id="gapsVal"></span>
+          <input type="range" id="close_gaps_mm" min="0" max="1" step="0.05"></label>
+        <label>Min area <span class="val" id="areaVal"></span>
+          <input type="range" id="min_area_mm2" min="0" max="5" step="0.05"></label>
+        <label>Prune spurs <span class="val" id="spurVal"></span>
+          <input type="range" id="prune_spur_mm" min="0" max="5" step="0.1"></label>
+        <label>DPI override
+          <input type="number" id="dpi" placeholder="from image" min="50" max="2400"></label>
+      </details>
+
+      <button id="reconvert">Re-detect</button>
+      <p class="hint warn" id="editWarn" hidden>Re-detecting discards your edits.</p>
+    </section>
+
+    <section>
+      <h2>Export</h2>
+      <label>Scale factor
+        <input type="number" id="expScale" value="1" step="0.001" min="0.01"></label>
+      <p class="hint">Measure the real part, divide by the size above, put it here.</p>
+      <label>Origin
+        <select id="expOrigin">
+          <option value="bbox">Bounding box at (0,0)</option>
+          <option value="page">Keep position on page</option>
+        </select></label>
+      <label>Entity
+        <select id="expEntity">
+          <option value="lwpolyline">Polyline</option>
+          <option value="spline">Spline</option>
+        </select></label>
+      <label>Filename
+        <input type="text" id="expName" value="profile"></label>
+      <button id="export" class="primary">Download DXF</button>
+    </section>
+
+    <section>
+      <h2>Keys</h2>
+      <dl class="keys">
+        <dt><kbd>Click</kbd></dt><dd>select path</dd>
+        <dt><kbd>Shift</kbd>+drag</dt><dd>box-select paths</dd>
+        <dt><kbd>Del</kbd></dt><dd>delete selection</dd>
+        <dt><kbd>Alt</kbd>+click</dt><dd>insert point on a path</dd>
+        <dt>Drag point</dt><dd>move it</dd>
+        <dt><kbd>Ctrl</kbd>+<kbd>Z</kbd></dt><dd>undo</dd>
+        <dt>Wheel</dt><dd>zoom &middot; drag to pan</dd>
+      </dl>
+    </section>
+  </aside>
+</main>
+
+<div id="toast" class="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
