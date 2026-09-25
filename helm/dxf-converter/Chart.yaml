@@ -1,0 +1,6 @@
+apiVersion: v2
+name: dxf-converter
+description: Scanned pen tracing -> clean, to-scale DXF (web UI)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,18 @@
+image:
+  repository: dwilson2547/dxf-converter
+  tag: latest
+  pullPolicy: Always
+
+ingress:
+  host: dxf-converter.local
+  className: nginx
+
+# Uploads live in a temp dir keyed by upload id, so this must stay at one
+# replica: a second pod would 404 on an id the first one issued.
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "2"
+    memory: 1Gi

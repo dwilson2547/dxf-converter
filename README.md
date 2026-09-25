@@ -126,10 +126,21 @@ modes' differing relationship to the true edge, the DXF hygiene Onshape actually
 stray `POINT` entities, mm units declared), and the web round trip including that editor deletions
 reach the exported file.
 
+## Cluster deploy
+
+Runs on the home cluster at http://dxf-converter.local via ArgoCD
+(`infra/cluster-config/argocd/dxf-converter.yaml`, chart `helm/dxf-converter/`, namespace
+`dxf-converter`). The image is `dwilson2547/dxf-converter:latest` with `pullPolicy: Always`:
+
+```
+docker build -t dwilson2547/dxf-converter:latest . && docker push dwilson2547/dxf-converter:latest
+kubectl -n dxf-converter rollout restart deploy/dxf-converter
+```
+
 ## Status
 
-Local PoC: CLI and web UI both working, 29 tests passing. Next: GitHub repo, container image, and a
-Helm chart for the cluster.
+CLI and web UI both working, 29 tests passing, deployed to the cluster.
 
-Nothing persists across a restart — uploads live in a temp directory keyed by id. That is fine
-locally; it needs revisiting before the cluster deploy.
+Nothing persists across a restart — uploads live in a temp directory (an `emptyDir` in the
+cluster) keyed by id. That pins the deployment to one replica; a restart just means re-uploading
+the scan.
