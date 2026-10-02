@@ -4,8 +4,9 @@ Upload a scan, look at what came out, fix it by hand, download the DXF. The
 hand-fixing is the point: no set of thresholds gets every scan right, and
 deleting a stray contour takes a second when you can see it.
 
-State lives in a temp directory keyed by upload id. Nothing persists across a
-restart, which is fine for a PoC.
+Anonymous uploads live in a temp directory keyed by upload id and don't
+survive a restart. Logged-in users can save scans (accounts.py, store/):
+records in Postgres, images in object storage.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dxfconv import Config, __version__                      # noqa: E402
 from dxfconv.pipeline import extract, apply_origin           # noqa: E402
 from dxfconv import dxfout                                   # noqa: E402
+from app import accounts                                     # noqa: E402
 
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -41,6 +43,7 @@ MAX_BYTES = 60 * 1024 * 1024
 CONVERT_LOCK = threading.Lock()
 
 app = FastAPI(title="dxf-converter", version=__version__)
+app.include_router(accounts.router)
 
 
 @app.get("/api/version")

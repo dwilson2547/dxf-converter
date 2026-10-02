@@ -1,6 +1,6 @@
 # v2 plan: saved scans, versions, compare overlay
 
-Status: **planned** (2026-10-02). Nothing here is built yet.
+Status: **phase 1 done** (2026-10-02): storage + accounts backend. Phases 2-5 planned.
 
 ## Goal
 
@@ -42,8 +42,8 @@ browser ──► dxf-converter API (cluster) ──► Postgres (cluster)   use
 | Table | Columns |
 |---|---|
 | `users` | `id`, `username` (unique), `password_hash` (argon2id), `created_at` |
-| `sessions` | `id` (random 256-bit token, stored hashed), `user_id`, `created_at`, `expires_at` |
-| `scans` | `id`, `user_id`, `name`, `image_key`, `image_sha256`, `width_px`, `height_px`, `content_type`, `created_at`, `updated_at` |
+| `auth_tokens` | `token_hash` (SHA-256 of a random 256-bit token), `user_id`, `created_at`, `expires_at` |
+| `scans` | `id`, `user_id`, `name`, `image_key`, `thumb_key`, `image_sha256`, `width_px`, `height_px`, `content_type`, `created_at`, `updated_at` |
 | `versions` | `id`, `scan_id`, `number` (1, 2, … per scan), `label`, `note`, `settings` jsonb, `paths` jsonb, `stats` jsonb, `parent_number`, `created_at` |
 
 - `settings` is the full `Settings` model (source, inks, fit_mm, square, …), so a version can be
@@ -61,8 +61,18 @@ Object keys in the bucket: `users/<user_id>/scans/<scan_id>/original.<ext>` and
 
 | Method | Path | |
 |---|---|---|
-| POST | `/api/auth/login`, `/api/auth/logout` | session cookie: `HttpOnly`, `SameSite=Lax` |
+| GET | `/api/auth/status` | whether accounts/storage are configured (the UI hides login if not) |
+| POST | `/api/auth/login` | `{username, password}` → `{token, expires_at, user}` |
+| POST | `/api/auth/logout` | revokes the presented token |
 | GET | `/api/auth/me` | who is logged in, or 401 |
+
+**Auth is a bearer token in the `Authorization` header, never a cookie** (decided 2026-10-02:
+cookie expiry is a recurring browser hassle). The token is random, not a JWT, so logout and
+password changes end it immediately; only its SHA-256 is stored. Expiry slides: 30 days from last
+use, pushed forward at most once a day. Failed logins are capped at 10 per client+username per
+10 minutes. The UI keeps the token in `localStorage` and sends the header on every API call.
+Because `<img>`/SVG `<image>` can't send headers, the editor fetches a saved scan's image with
+the header and displays it from a blob URL — the eyedropper reads pixels from the same blob.
 | GET | `/api/scans` | the user's scans with thumbnail URL, latest version's stats |
 | POST | `/api/scans` | save the current upload as a new scan (image → AIStor) + version 1 |
 | GET | `/api/scans/{id}` | scan + version list (stats only) |
@@ -94,9 +104,11 @@ attack surface for no benefit.
 
 Each phase ends tested and committed; release once at the end as **2.0.0**.
 
-1. **Storage + accounts backend.** DB schema, argon2 passwords, sessions, S3 client, admin CLI.
-   Tests run against a throwaway MinIO container and a scratch Postgres, not mocks — the storage
-   path is what is being added.
+1. **Storage + accounts backend — done 2026-10-02.** `app/store/` (config, models, db, auth,
+   objects), `app/accounts.py` (routes + `current_user` dependency), `app/admin.py`
+   (`add-user`, `set-password`, `list-users`, `delete-user`, `check`). Tests run against a
+   throwaway `postgres:17` container and moto's S3 server (MinIO images don't pull, see below);
+   an opt-in test hits the real bucket under a random `_tests/` prefix.
 2. **Scans + versions API.** Save, list, load, stream image/thumb, version CRUD, ownership checks.
    Image cache in the temp dir, re-fetched from AIStor after a pod restart.
 3. **UI: login, library, save/load, version strip.** Driven end-to-end in a browser with Playwright.
@@ -112,7 +124,7 @@ Each phase ends tested and committed; release once at the end as **2.0.0**.
 | Decision | Recommendation | Why |
 |---|---|---|
 | Where metadata lives | Cluster Postgres, new database `dxfconv` | Already running; keeps the pod stateless. SQLite on a PVC is the alternative. |
-| Schema changes | Alembic from the first migration | This will hold real data from day one. |
+| Schema changes | **Decided:** bootstrap with `create_all` now; Alembic with a baseline at the first schema change after real scans exist | No data to preserve yet; the schema is still settling across phases 1-4. |
 | Accounts | Admin-created, username + password | No identity provider exists on the cluster today; this can move to OIDC later without changing the data model. |
 | Anonymous use | Keep it | Quick one-off conversions shouldn't need a login. |
 | DXF files | Not stored; regenerated on export from the saved version | Paths + settings fully determine the DXF. |

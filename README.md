@@ -185,6 +185,14 @@ modes' differing relationship to the true edge, the DXF hygiene Onshape actually
 stray `POINT` entities, mm units declared), and the web round trip including that editor deletions
 reach the exported file.
 
+
+The storage tests (accounts, tokens, object storage) need a Postgres and an S3 server: they start
+a throwaway `postgres:17` container (or use `DXF_TEST_DATABASE_URL`) and moto's in-process S3
+server, and skip if neither is available. Install the test extras with
+`pip install -r requirements-dev.txt`. To also check the real bucket, set `DXF_TEST_S3_ENDPOINT`,
+`_BUCKET`, `_ACCESS_KEY` and `_SECRET_KEY`; that test writes only under a random `_tests/` prefix
+and removes it.
+
 ## Cluster deploy
 
 Runs on the home cluster at http://dxf-converter.local via ArgoCD
