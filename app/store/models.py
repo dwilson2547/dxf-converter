@@ -77,6 +77,9 @@ class Scan(Base):
     content_type: Mapped[str] = mapped_column(String(100))
     width_px: Mapped[int] = mapped_column(Integer)
     height_px: Mapped[int] = mapped_column(Integer)
+    last_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    """Highest version number ever issued. Numbers come from this counter, not
+    max(existing) + 1, so deleting the newest version never reuses its number."""
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow)

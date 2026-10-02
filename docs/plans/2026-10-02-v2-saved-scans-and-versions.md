@@ -1,6 +1,6 @@
 # v2 plan: saved scans, versions, compare overlay
 
-Status: **phase 1 done** (2026-10-02): storage + accounts backend. Phases 2-5 planned.
+Status: **phases 1-2 done** (2026-10-02): accounts/storage backend and the scans API. Phases 3-5 planned.
 
 ## Goal
 
@@ -43,7 +43,7 @@ browser ──► dxf-converter API (cluster) ──► Postgres (cluster)   use
 |---|---|
 | `users` | `id`, `username` (unique, lower-case), `password_hash` (argon2id), `is_admin`, `created_at` |
 | `auth_tokens` | `token_hash` (SHA-256 of a random 256-bit token), `user_id`, `created_at`, `expires_at` |
-| `scans` | `id`, `user_id`, `name`, `image_key`, `thumb_key`, `image_sha256`, `width_px`, `height_px`, `content_type`, `created_at`, `updated_at` |
+| `scans` | `id`, `user_id`, `name`, `image_key`, `thumb_key`, `image_sha256`, `width_px`, `height_px`, `content_type`, `last_version`, `created_at`, `updated_at` |
 | `versions` | `id`, `scan_id`, `number` (1, 2, … per scan), `label`, `note`, `settings` jsonb, `paths` jsonb, `stats` jsonb, `parent_number`, `created_at` |
 
 - `settings` is the full `Settings` model (source, inks, fit_mm, square, …), so a version can be
@@ -53,6 +53,10 @@ browser ──► dxf-converter API (cluster) ──► Postgres (cluster)   use
 - `stats` is computed on save (paths, vertices, circles, extents) so the library and the compare
   panel don't have to load full geometry.
 - `parent_number` records which version an edit started from: a short lineage, no branching UI.
+- `last_version` is a counter: new versions take `last_version + 1` under a row lock on the scan,
+  so concurrent saves get consecutive numbers and a deleted version's number is never reused.
+- Editor-only state (hidden layers etc.) is posted as `view` and kept inside `settings` under
+  `_view`; loading a version returns it separately as `view`.
 
 Object keys in the bucket: `users/<user_id>/scans/<scan_id>/original.<ext>` and
 `.../thumb.webp` (≤400 px, for the library list). Deleting a scan deletes both objects and its rows.
@@ -79,8 +83,15 @@ the header and displays it from a blob URL — the eyedropper reads pixels from 
 | GET | `/api/scans/{id}` | scan + version list (stats only) |
 | GET | `/api/scans/{id}/image`, `/thumb` | streamed from AIStor through the API |
 | POST | `/api/scans/{id}/versions` | save editor state as the next version |
-| GET | `/api/scans/{id}/versions/{n}` | settings + paths, to load into the editor or overlay |
-| PATCH / DELETE | `/api/scans/{id}`, `.../versions/{n}` | rename / relabel / delete |
+| GET | `/api/scans/{id}/versions/{n}` | settings + view + paths, to load into the editor or overlay |
+| PATCH / DELETE | `/api/scans/{id}`, `.../versions/{n}` | rename / relabel / delete (the only version can't be deleted — delete the scan) |
+| POST | `/api/scans/{id}/convert` | re-detect on the saved image (same pipeline as `/api/convert`); saves nothing |
+| POST | `/api/scans/{id}/export` | DXF from posted paths, same as `/api/export` |
+
+Saved images reach the browser only through these routes; they are never copied to the anonymous
+`/api/scan/{upload_id}` path. Conversion reads a local cache (`<workdir>/saved/<scan_id>/`),
+re-fetched from the bucket and checked against `image_sha256` when missing — after a pod restart,
+for example. Limits: 20,000 paths and 500,000 points per version.
 
 Every scan route checks ownership; another user's id is a 404, not a 403. Upload, convert and
 export stay usable without logging in.
@@ -129,8 +140,10 @@ Each phase ends tested and committed; release once at the end as **2.0.0**.
    an opt-in test hits the real bucket under a random `_tests/` prefix.
    Follow-up the same day: `is_admin`, `init-admin`, sign-up (+ `ALLOW_SIGNUP`), case-insensitive
    usernames, admin panel API (`app/admin_api.py`, `app/store/content.py`).
-2. **Scans + versions API.** Save, list, load, stream image/thumb, version CRUD, ownership checks.
-   Image cache in the temp dir, re-fetched from AIStor after a pod restart.
+2. **Scans + versions API — done 2026-10-02.** `app/scans.py`; shared convert/export code moved
+   to `app/editing.py`. 21 tests (`tests/test_scans.py`) incl. ownership on every route,
+   concurrent version saves, cache loss, tampered and missing objects. End-to-end over HTTP in
+   the built image with Postgres + an S3 server on the Seeburg photo.
 3. **UI: login + sign-up, admin panel, library, save/load, version strip.** Driven end-to-end in
    a browser with Playwright.
 4. **UI: compare overlay + stats diff.**
