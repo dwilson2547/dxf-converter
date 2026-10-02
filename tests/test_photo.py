@@ -216,3 +216,32 @@ def test_snap_guided_keeps_a_taper_chopped_into_short_pieces():
     coarse = np.array([[0, 10], [200, 5], [200, 20], [0, 20]], float)
     q = shapes.snap_guided(fine, coarse, tol_deg=20, max_shift=1, near=2)
     assert np.ptp(q[q[:, 1] < 15][:, 1]) == pytest.approx(5)
+
+
+# --- hole filling at scale ----------------------------------------------------
+
+def test_fill_foreign_holes_is_fast_on_a_big_shape_with_many_holes():
+    """A metal rim picked as an ink is one huge shape with hundreds of holes.
+    Measuring the shape again for every hole took most of a minute on the
+    cluster (2.0.0); it must be measured once."""
+    import time
+    from dxfconv import photo
+    h = w = 2400
+    lab = np.zeros((h, w, 3), np.float32)
+    lab[...] = (200, 128, 128)                       # pale substrate
+    m = np.zeros((h, w), np.uint8)
+    cv2.rectangle(m, (100, 100), (2300, 2300), 255, -1)
+    lab[m > 0] = (90, 170, 170)                      # red ink
+    foreign, counters = [], []
+    for i in range(300):
+        x, y = 150 + (i % 20) * 105, 150 + (i // 20) * 140
+        cv2.rectangle(m, (x, y), (x + 20, y + 20), 0, -1)
+        if i % 2:                                    # looks like ink: fill
+            lab[y:y + 21, x:x + 21] = (95, 168, 168); foreign.append((x + 10, y + 10))
+        else:                                        # substrate showing: keep
+            lab[y:y + 21, x:x + 21] = (200, 128, 128); counters.append((x + 10, y + 10))
+    t = time.time()
+    out = photo.fill_foreign_holes(m, lab, 3)
+    assert time.time() - t < 5
+    assert all(out[y, x] == 255 for x, y in foreign)
+    assert all(out[y, x] == 0 for x, y in counters)

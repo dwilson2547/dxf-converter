@@ -21,7 +21,7 @@ function setSaveState() {
   const btn = $('saveBtn');
   if (!btn) return;
   btn.hidden = !API.status.accounts;
-  btn.disabled = API.status.accounts && !API.status.storage;
+  btn.disabled = (API.status.accounts && !API.status.storage) || !!S.busy;
   btn.title = btn.disabled ? "Saving isn't available — this server has no image storage."
     : S.scan ? 'Save your changes as a new version' : 'Save this file to your account';
   btn.textContent = S.scan ? 'Save version' : 'Save';
@@ -155,7 +155,8 @@ async function loadVersion(number) {
     confirmLabel: `Load v${number}`, danger: true,
   }))) return;
   clearError('versionsErr');
-  $('busy').hidden = false;
+  const seq = ++busySeq;
+  setBusy(true, `Loading v${number}…`);
   try {
     const v = await api(`/api/scans/${S.scan.id}/versions/${number}`, { auth: true });
     loadVersionIntoEditor(v);
@@ -170,7 +171,7 @@ async function loadVersion(number) {
   } catch (err) {
     showError('versionsErr', `Couldn't load v${number}: ${err.message}`);
   } finally {
-    $('busy').hidden = true;
+    if (seq === busySeq) setBusy(false);
   }
 }
 
@@ -548,7 +549,8 @@ async function deleteScan(sc) {
 async function openScan(scanId, number = null) {
   clearError('libraryErr');
   showView('editor');
-  $('busy').hidden = false;
+  const seq = ++busySeq;
+  setBusy(true, 'Opening…');
   $('status').textContent = 'Opening…';
   try {
     const detail = await api(`/api/scans/${scanId}`, { auth: true });
@@ -576,7 +578,7 @@ async function openScan(scanId, number = null) {
     showView('home');
     showError('libraryErr', `Couldn't open that scan: ${err.message}`);
   } finally {
-    $('busy').hidden = true;
+    if (seq === busySeq) setBusy(false);
   }
 }
 

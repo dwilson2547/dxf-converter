@@ -2,7 +2,7 @@ image:
   repository: dwilson2547/dxf-converter
   # A release from CHANGELOG.md. Bumping this is how a release reaches the
   # cluster; :latest is pushed too, but the chart doesn't follow it.
-  tag: "2.0.0"
+  tag: "2.0.1"
   pullPolicy: IfNotPresent
 
 ingress:

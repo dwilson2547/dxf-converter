@@ -249,16 +249,25 @@ def fill_foreign_holes(m: np.ndarray, lab: np.ndarray, u: int) -> np.ndarray:
     never had; it still looks like ink, so it gets filled. Only holes up to a
     quarter of their shape qualify: a ring's middle differs from its outside
     too, and that is the design.
+
+    The shape's ink colour and surroundings colour are measured once per
+    shape, and each hole only within its own bounding box. (Measuring the
+    shape again for every hole made a big shape with hundreds of holes — a
+    metal rim picked as an ink — take most of a minute.)
     """
     cs, hier = cv2.findContours(m, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
     if hier is None:
         return m
-    m = m.copy()
-    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * u + 1, 2 * u + 1))
+    holes_of: dict[int, list] = {}
     for i, c in enumerate(cs):
         parent = hier[0][i][3]
-        if parent < 0 or cv2.contourArea(c) > 0.25 * cv2.contourArea(cs[parent]):
-            continue
+        if parent >= 0 and cv2.contourArea(c) <= 0.25 * cv2.contourArea(cs[parent]):
+            holes_of.setdefault(parent, []).append(c)
+    if not holes_of:
+        return m
+    out = m.copy()
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * u + 1, 2 * u + 1))
+    for parent, holes in holes_of.items():
         x, y, w, h = cv2.boundingRect(cs[parent])
         pad = 3 * u
         y0, y1 = max(0, y - pad), min(m.shape[0], y + h + pad)
@@ -266,18 +275,22 @@ def fill_foreign_holes(m: np.ndarray, lab: np.ndarray, u: int) -> np.ndarray:
         shape = np.zeros((y1 - y0, x1 - x0), np.uint8)
         cv2.drawContours(shape, [cs[parent]], -1, 1, -1, offset=(-x0, -y0))
         around = (cv2.dilate(shape, k) > 0) & (shape == 0)
-        hole = np.zeros_like(shape)
-        cv2.drawContours(hole, [c], -1, 1, -1, offset=(-x0, -y0))
         ink = (m[y0:y1, x0:x1] > 0) & (shape > 0)
-        if not around.any() or not hole.any() or not ink.any():
+        if not around.any() or not ink.any():
             continue
         sub = lab[y0:y1, x0:x1]
-        h_col = np.median(sub[hole > 0], axis=0)
-        to_ink = np.linalg.norm(h_col - np.median(sub[ink], axis=0))
-        to_out = np.linalg.norm(h_col - np.median(sub[around], axis=0))
-        if to_ink < to_out:
-            cv2.drawContours(m, [c], -1, 255, -1)
-    return m
+        ink_col = np.median(sub[ink], axis=0)
+        out_col = np.median(sub[around], axis=0)
+        for c in holes:
+            hx, hy, hw, hh = cv2.boundingRect(c)
+            hole = np.zeros((hh, hw), np.uint8)
+            cv2.drawContours(hole, [c], -1, 1, -1, offset=(-hx, -hy))
+            if not hole.any():
+                continue
+            h_col = np.median(lab[hy:hy + hh, hx:hx + hw][hole > 0], axis=0)
+            if np.linalg.norm(h_col - ink_col) < np.linalg.norm(h_col - out_col):
+                cv2.drawContours(out, [c], -1, 255, -1)
+    return out
 
 
 def _coverage(pts, cx, cy, inl) -> float:

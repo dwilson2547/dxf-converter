@@ -4,6 +4,21 @@ Each release is a git tag `vX.Y.Z` and a Docker image `dwilson2547/dxf-converter
 (`:latest` points at the newest release). The cluster runs the version pinned in
 `helm/dxf-converter/values.yaml` — bump `image.tag` there to roll out a release.
 
+## 2.0.1 — 2026-10-02
+
+### Fixed
+- **Deleted artifacts came back on save.** A detection still running (e.g. after picking an ink)
+  replaced the paths when it finished — including after edits made meanwhile, or while the Save
+  dialog was open, so the save stored the fresh detection. Editing is now paused while a
+  detection or version load runs (canvas, path list, Delete, Undo/Redo, Save, Pick, Re-detect),
+  and a superseded detection's result is ignored.
+- **"Detecting…" seemed stuck after picking a large-area colour.** Picking a colour that covers
+  a big region (a metal rim) made hole-filling re-measure the whole region for each of its
+  hundreds of holes: 87 s on the cluster for the Seeburg badge. It now measures each shape once:
+  1.4 s locally, identical output.
+- The status bar kept the last detection's counts after edits, and stayed on "Click an ink
+  colour…" after a pick that asked to confirm.
+
 ## 2.0.0 — 2026-10-02
 
 ### Added

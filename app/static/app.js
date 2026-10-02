@@ -118,6 +118,7 @@ function syncFitField() {
 }
 
 function applyFit() {
+  if (S.busy) return;
   const target = parseFloat($('fit_mm').value);
   const current = maxExtent();
   if (!S.page || !current || !(target > 0) || Math.abs(target - current) < 1e-6) return;
@@ -192,12 +193,33 @@ function applySettings(st) {
   renderInks();
 }
 
+/* ---------- busy ----------
+ * While a detection (or a version load) is in flight, editing is paused:
+ * its result replaces the paths, so any edit made meanwhile would be
+ * silently thrown away — or, worse, saved over by the result. */
+
+let busySeq = 0;
+
+function setBusy(on, label = 'Detecting…') {
+  S.busy = on;
+  $('busy').hidden = !on;
+  $('busyText').textContent = label;
+  $('editor').classList.toggle('busy-lock', on);
+  for (const id of ['reconvert', 'pickInk', 'fit_mm', 'delSelected']) $(id).disabled = on;
+  if (on && S.picking) setPicking(false);
+  $('undo').disabled = on || !S.undo.length;
+  $('redo').disabled = on || !S.redo.length;
+  if (!on) $('delSelected').disabled = S.sel.size === 0;
+  if (typeof setSaveState === 'function') setSaveState();
+}
+
 /* mode 'new': a fresh upload — clean slate. mode 'redetect': same image,
  * new settings — the paths being replaced go onto the undo stack, so a
  * re-detect that made things worse is one Ctrl+Z away. */
 async function detect(mode = 'new') {
+  const seq = ++busySeq;
   $('status').textContent = 'Detecting…';
-  $('busy').hidden = false;
+  setBusy(true, 'Detecting…');
   clearError('detectErr');
   try {
     // A saved scan re-detects on its stored image (logged in); anonymous work
@@ -206,6 +228,7 @@ async function detect(mode = 'new') {
       ? await api(`/api/scans/${S.scan.id}/convert`,
         { method: 'POST', auth: true, json: { settings: readSettings() } })
       : await api(`/api/convert/${S.id}`, { method: 'POST', json: readSettings() });
+    if (seq !== busySeq) return;            // a newer detection superseded this one
 
     if (mode === 'redetect' && S.paths.length) {
       pushUndo();
@@ -230,6 +253,7 @@ async function detect(mode = 'new') {
     renderInks();
     $('status').textContent = `${S.paths.length} paths · ${pointCount(S.paths)} points`;
   } catch (err) {
+    if (seq !== busySeq) return;
     $('status').textContent = 'Detection failed';
     if (err.status === 404 && S.paths.length && !S.scan) {
       showError('detectErr', 'The server restarted and lost the uploaded image. Your edits '
@@ -238,7 +262,7 @@ async function detect(mode = 'new') {
       showError('detectErr', err.message);
     }
   } finally {
-    $('busy').hidden = true;
+    if (seq === busySeq) setBusy(false);
   }
 }
 
@@ -339,11 +363,13 @@ async function pickAt(lx, ly) {
   redetect();
 }
 
+let statusBeforePick = '';
 function setPicking(on) {
+  if (on && !S.picking) statusBeforePick = $('status').textContent;
   S.picking = on;
   $('pickInk').classList.toggle('active', on);
   $('svg').classList.toggle('picking', on);
-  $('status').textContent = on ? 'Click an ink colour on the image…' : $('status').textContent;
+  $('status').textContent = on ? 'Click an ink colour on the image…' : statusBeforePick;
 }
 
 async function redetect() {
@@ -490,10 +516,17 @@ function render() {
   renderStats();
   renderLayers();
   renderPathList();
+  // The status bar follows the geometry (it used to keep the last detection's
+  // counts after edits). Messages like "Detecting…" own it while busy/picking.
+  if (!S.busy && !S.picking) {
+    const head = S.scan ? `${S.scan.name} · ${S.scan.current ? `v${S.scan.current}` : 'unsaved'}`
+      + `${S.dirty ? ' (edited)' : ''} · ` : '';
+    $('status').textContent = `${head}${S.paths.length} paths · ${pointCount(S.paths)} points`;
+  }
   if (S.compare && typeof updateCompareStats === 'function') updateCompareStats();
-  $('delSelected').disabled = S.sel.size === 0;
-  $('undo').disabled = !S.undo.length;
-  $('redo').disabled = !S.redo.length;
+  $('delSelected').disabled = S.busy || S.sel.size === 0;
+  $('undo').disabled = S.busy || !S.undo.length;
+  $('redo').disabled = S.busy || !S.redo.length;
 }
 
 function renderStats() {
@@ -905,6 +938,9 @@ function init() {
 
   document.addEventListener('keydown', (e) => {
     if (/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
+    if (S.busy && (e.key === 'Delete' || e.key === 'Backspace' || e.key.toLowerCase() === 'z')) {
+      e.preventDefault(); return;           // editing is paused while detecting
+    }
     if (e.key === 'Delete' || e.key === 'Backspace') {
       e.preventDefault(); deleteSelection();
     } else if (e.key === 'Escape') {

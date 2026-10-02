@@ -248,8 +248,8 @@ Check what's running with `curl http://dxf-converter.local/api/version`.
 
 ## Status
 
-2.0.0: accounts, saved scans with versions and compare, admin panel; scan and photo modes;
-119 tests passing (plus one opt-in test against the real bucket); deployed to the cluster.
+2.0.1: accounts, saved scans with versions and compare, admin panel; scan and photo modes;
+120 tests passing (plus one opt-in test against the real bucket); deployed to the cluster.
 
 Nothing persists across a restart — uploads live in a temp directory (an `emptyDir` in the
 cluster) keyed by id. That pins the deployment to one replica; a restart just means re-uploading

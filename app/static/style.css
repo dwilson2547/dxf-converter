@@ -225,9 +225,13 @@ button.danger.solid { background: #a33; border-color: #a33; color: #fff; }
 
 /* loading + empty */
 .stage { position: relative; }
+/* Blocks the canvas while busy (pointer-events on): edits made now would be
+   overwritten by the result. */
 .busy { position: absolute; inset: 44px 0 30px 0; display: flex; align-items: center;
   justify-content: center; gap: 10px; background: rgba(14, 17, 22, 0.55); color: var(--fg);
-  font-size: 14px; pointer-events: none; z-index: 5; }
+  font-size: 14px; pointer-events: auto; cursor: progress; z-index: 5; text-align: left; }
+.busy .muted { font-size: 12px; }
+#editor.busy-lock .path-list, #editor.busy-lock .version-list .vactions { pointer-events: none; opacity: .5; }
 .busy[hidden] { display: none; }
 .spinner { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--line);
   border-top-color: var(--accent); animation: spin .8s linear infinite; }
