@@ -14,6 +14,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import uuid
 
 import numpy as np
@@ -33,6 +34,11 @@ STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 WORKDIR = os.path.join(tempfile.gettempdir(), "dxfconv-uploads")
 ALLOWED = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 MAX_BYTES = 60 * 1024 * 1024
+
+# One conversion at a time. A photo-mode run on a phone-sized image peaks near
+# 1 GB; the editor can fire a second request (eyedropper, Re-detect) before the
+# first finishes, and two at once is what got the pod OOM-killed.
+CONVERT_LOCK = threading.Lock()
 
 app = FastAPI(title="dxf-converter", version=__version__)
 
@@ -148,7 +154,8 @@ def scan(upload_id: str):
 def convert_upload(upload_id: str, settings: Settings):
     src = _scan_path(upload_id)
     try:
-        paths_mm, _, _, page, report = extract(src, settings.to_config())
+        with CONVERT_LOCK:
+            paths_mm, _, _, page, report = extract(src, settings.to_config())
     except Exception as exc:                       # noqa: BLE001
         raise HTTPException(422, f"conversion failed: {exc}") from exc
 

@@ -37,6 +37,7 @@ from . import shapes
 from .preprocess import load_gray
 
 TARGET_PX = 3000          # upsample until the long side is about this
+PALETTE_PX = 1200         # colour clustering works on a copy this size
 SUBSTRATE_FRACTION = 0.30
 HALO_PX = 2.0
 HALO_FRACTION = 0.5
@@ -84,7 +85,14 @@ def load_color(path: str) -> np.ndarray:
 
 def build_palette(bgr: np.ndarray, k: int, inks: list[str]):
     """Returns (palette_lab[N,3], ink_ids, bg_id, info)."""
+    # The palette only needs a representative sample of colours, so work on a
+    # copy no bigger than PALETTE_PX: a full-size 12 MP photo's filtered Lab
+    # copy alone is a few hundred MB.
     h, w = bgr.shape[:2]
+    k_small = min(1.0, PALETTE_PX / max(h, w))
+    if k_small < 1.0:
+        bgr = cv2.resize(bgr, (int(w * k_small), int(h * k_small)),
+                         interpolation=cv2.INTER_AREA)
     lab = _lab(cv2.bilateralFilter(bgr, 9, 30, 9))
     flat = lab.reshape(-1, 3)
     rng = np.random.default_rng(0)
@@ -136,8 +144,17 @@ def assign(lab: np.ndarray, palette: np.ndarray, ink_ids=(), bias: float = 1.0) 
     colour. The halo and contrast filters mop up what this over-claims."""
     best = np.full(lab.shape[:2], np.inf, np.float32)
     out = np.zeros(lab.shape[:2], np.uint8)
+    d = np.empty(lab.shape[:2], np.float32)
+    t = np.empty_like(d)
     for i, c in enumerate(palette):
-        d = np.sqrt(((lab - c) ** 2).sum(-1))
+        # Channel by channel, in place: (lab - c) ** 2 on the whole image
+        # makes several full-size float temporaries per colour.
+        d.fill(0)
+        for ch in range(3):
+            np.subtract(lab[..., ch], c[ch], out=t)
+            np.multiply(t, t, out=t)
+            d += t
+        np.sqrt(d, out=d)
         if i in ink_ids:
             d /= bias
         better = d < best
@@ -274,7 +291,7 @@ def carve_rings(m: np.ndarray, u: int) -> np.ndarray:
     if hier is None:
         return m
     m = m.copy()
-    yy = xx = None
+    yy = xx = None      # float32 open grids: broadcasting, not two full int64 images
     for i, c in enumerate(cs):
         pts = c[:, 0, :].astype(float)
         if len(pts) < 60:
@@ -286,8 +303,9 @@ def carve_rings(m: np.ndarray, u: int) -> np.ndarray:
         if _coverage(pts, cx, cy, res) < 0.75:
             continue
         if yy is None:
-            yy, xx = np.mgrid[:m.shape[0], :m.shape[1]]
-        rr = np.hypot(xx - cx, yy - cy)
+            yy = np.arange(m.shape[0], dtype=np.float32)[:, None]
+            xx = np.arange(m.shape[1], dtype=np.float32)[None, :]
+        rr = np.hypot(xx - np.float32(cx), yy - np.float32(cy))
         gap = CARVE_PX * u
         if hier[0][i][3] >= 0:      # a hole: attachments sit inside it
             m[(rr > r - gap) & (rr < r - 0.5 * u)] = 0
@@ -309,9 +327,12 @@ def corner_preserving_smooth(p: np.ndarray, h_max: int, s: int) -> np.ndarray:
     corner = cos < np.cos(np.radians(40))
     idx = np.arange(n)
     if corner.any():
+        # Distance (in contour steps, wrapping) to the nearest corner, via a
+        # sorted search rather than an n x corners matrix.
         cidx = idx[corner]
-        d = np.abs(idx[:, None] - cidx[None, :])
-        d = np.minimum(d, n - d).min(axis=1)
+        ext = np.concatenate([cidx - n, cidx, cidx + n])
+        pos = np.searchsorted(ext, idx)
+        d = np.minimum(np.abs(ext[pos] - idx), np.abs(idx - ext[pos - 1]))
     else:
         d = np.full(n, n)
     h = np.clip(d - 1, 0, h_max).astype(int)

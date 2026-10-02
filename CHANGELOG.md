@@ -4,6 +4,25 @@ Each release is a git tag `vX.Y.Z` and a Docker image `dwilson2547/dxf-converter
 (`:latest` points at the newest release). The cluster runs the version pinned in
 `helm/dxf-converter/values.yaml` — bump `image.tag` there to roll out a release.
 
+## 1.0.1 — 2026-10-02
+
+### Fixed
+- Pod OOM-killed during photo-mode conversions (1 GiB limit). Measured peaks: ~780 MB for a 1 MP
+  photo, ~870 MB for a 12 MP one, before the web server's own share and before a second overlapping
+  request.
+  - Colour clustering now works on a copy at most 1200 px on its long side (it only needs a
+    sample), not the full-resolution image.
+  - Corner-preserving smoothing finds the nearest corner by sorted search instead of a
+    points × corners matrix, which blew up on long, rough silhouettes.
+  - Nearest-colour assignment and ring cutting no longer allocate full-size float64/int64
+    temporaries.
+  - The server runs one conversion at a time, so overlapping requests (eyedropper, Re-detect)
+    queue instead of stacking memory.
+  - Result: ~470 MB for the 1 MP photo; ~810 MB for 12 MP.
+
+### Changed
+- Helm: memory request 256Mi → 512Mi, limit 1Gi → 3Gi.
+
 ## 1.0.0 — 2026-10-01
 
 ### Added

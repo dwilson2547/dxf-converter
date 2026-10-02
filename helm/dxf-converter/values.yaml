@@ -2,7 +2,7 @@ image:
   repository: dwilson2547/dxf-converter
   # A release from CHANGELOG.md. Bumping this is how a release reaches the
   # cluster; :latest is pushed too, but the chart doesn't follow it.
-  tag: "1.0.0"
+  tag: "1.0.1"
   pullPolicy: IfNotPresent
 
 ingress:
@@ -11,10 +11,13 @@ ingress:
 
 # Uploads live in a temp dir keyed by upload id, so this must stay at one
 # replica: a second pod would 404 on an id the first one issued.
+# Photo mode peaks around 0.5 GB on a ~1 MP photo and 0.8-0.9 GB on a 12 MP
+# one (measured, 1.0.1). Conversions run one at a time (CONVERT_LOCK), so the
+# limit covers one big conversion plus the server, with headroom.
 resources:
   requests:
     cpu: 100m
-    memory: 256Mi
+    memory: 512Mi
   limits:
     cpu: "2"
-    memory: 1Gi
+    memory: 3Gi
