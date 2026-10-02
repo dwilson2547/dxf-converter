@@ -641,8 +641,13 @@ function setupCanvas() {
 
     if (target.classList.contains('geom-hit')) {
       const pi = +target.dataset.path;
-      if (e.altKey) {
-        insertPoint(pi, screenToLocal(e));
+      // Ctrl/Cmd+click (or Alt+click, which some Linux desktops grab for
+      // window dragging) adds a point on the segment; keep the button down
+      // to drag it straight away.
+      if (e.ctrlKey || e.metaKey || e.altKey) {
+        const vi = insertPoint(pi, screenToLocal(e));
+        mode = 'vert';
+        start = { pi, vi };
         return;
       }
       if (!e.shiftKey) S.sel.clear();
@@ -719,10 +724,13 @@ function selectInBand(x0, y0, x1, y1, additive) {
   S.selVert = null;
 }
 
+/* Adds a point on the segment nearest the click, placed exactly on that
+ * segment so the shape is unchanged until the point is moved. Returns its
+ * index. */
 function insertPoint(pi, [lx, ly]) {
   const p = S.paths[pi];
   const target = toModel(lx, ly);
-  let best = { d: Infinity, at: 1 };
+  let best = { d: Infinity, at: 1, pt: target };
 
   const n = p.points.length;
   const last = p.closed ? n : n - 1;
@@ -732,16 +740,18 @@ function insertPoint(pi, [lx, ly]) {
     const len2 = vx * vx + vy * vy;
     let t = len2 ? ((target[0] - a[0]) * vx + (target[1] - a[1]) * vy) / len2 : 0;
     t = Math.max(0, Math.min(1, t));
-    const d = Math.hypot(a[0] + t * vx - target[0], a[1] + t * vy - target[1]);
-    if (d < best.d) best = { d, at: i + 1 };
+    const on = [a[0] + t * vx, a[1] + t * vy];
+    const d = Math.hypot(on[0] - target[0], on[1] - target[1]);
+    if (d < best.d) best = { d, at: i + 1, pt: on };
   }
 
   snapshot();
-  p.kind = 'poly';
-  p.points.splice(best.at, 0, target);
+  p.kind = 'poly';               // an added point means it's no longer a true circle
+  p.points.splice(best.at, 0, best.pt);
   S.sel.clear(); S.sel.add(pi);
   S.selVert = { path: pi, index: best.at };
   render();
+  return best.at;
 }
 
 function deleteSelection() {

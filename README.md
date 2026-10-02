@@ -18,7 +18,7 @@ Drop a scan in and you get the detected geometry over the faded scan. From there
   shortest-first, so leftover dirt sorts to the top where you can delete it in one click.
 - **Shift+drag** boxes-selects paths (a path is only caught when it fits entirely inside the box,
   so brushing past a long curve doesn't sweep it up with the dirt).
-- **Drag a point** to move it, **Alt+click** a path to insert one, **Del** with a point selected
+- **Drag a point** to move it, **Ctrl+click** a line to add one there (keep the button down to drag it; Alt+click works too), **Del** with a point selected
   removes just that point.
 - **Ctrl+Z** / **Ctrl+Shift+Z** undo and redo.
 - The **Removed** toggle boxes what the filters threw out, so you can see what it discarded
