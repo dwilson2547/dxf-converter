@@ -189,17 +189,29 @@ reach the exported file.
 
 Runs on the home cluster at http://dxf-converter.local via ArgoCD
 (`infra/cluster-config/argocd/dxf-converter.yaml`, chart `helm/dxf-converter/`, namespace
-`dxf-converter`). The image is `dwilson2547/dxf-converter:latest` with `pullPolicy: Always`:
+`dxf-converter`). The chart pins a release: `image.tag` in `helm/dxf-converter/values.yaml`.
+
+Releasing `X.Y.Z` (see [`CHANGELOG.md`](CHANGELOG.md)):
 
 ```
-docker build -t dwilson2547/dxf-converter:latest . && docker push dwilson2547/dxf-converter:latest
-kubectl -n dxf-converter rollout restart deploy/dxf-converter
+# 1. bump __version__ in dxfconv/__init__.py, version/appVersion in Chart.yaml,
+#    add a CHANGELOG entry
+# 2. build and push the release tag and :latest
+docker build -t dwilson2547/dxf-converter:X.Y.Z -t dwilson2547/dxf-converter:latest .
+docker push dwilson2547/dxf-converter:X.Y.Z && docker push dwilson2547/dxf-converter:latest
+# 3. pin it, tag the repo, push — Argo rolls it out
+#    (set image.tag: "X.Y.Z" in values.yaml, commit)
+git tag -a vX.Y.Z -m "X.Y.Z" && git push && git push --tags
 ```
+
+Argo polls every few minutes; to roll out now:
+`kubectl -n argocd annotate app dxf-converter argocd.argoproj.io/refresh=hard --overwrite`.
+Check what's running with `curl http://dxf-converter.local/api/version`.
 
 ## Status
 
-CLI and web UI both working, scan and photo modes, 48 tests passing. The cluster deployment predates
-photo mode until the image is rebuilt and pushed.
+1.0.0: CLI and web UI both working, scan and photo modes, 49 tests passing, deployed to the
+cluster.
 
 Nothing persists across a restart — uploads live in a temp directory (an `emptyDir` in the
 cluster) keyed by id. That pins the deployment to one replica; a restart just means re-uploading

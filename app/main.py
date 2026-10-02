@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dxfconv import Config                                   # noqa: E402
+from dxfconv import Config, __version__                      # noqa: E402
 from dxfconv.pipeline import extract, apply_origin           # noqa: E402
 from dxfconv import dxfout                                   # noqa: E402
 
@@ -34,7 +34,12 @@ WORKDIR = os.path.join(tempfile.gettempdir(), "dxfconv-uploads")
 ALLOWED = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 MAX_BYTES = 60 * 1024 * 1024
 
-app = FastAPI(title="dxf-converter")
+app = FastAPI(title="dxf-converter", version=__version__)
+
+
+@app.get("/api/version")
+def version():
+    return {"version": __version__}
 
 
 class Settings(BaseModel):

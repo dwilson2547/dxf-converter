@@ -251,3 +251,8 @@ def test_edited_circle_exports_as_a_polyline(client, tmp_path):
     out = tmp_path / "p.dxf"
     out.write_bytes(res.content)
     assert not ezdxf.readfile(str(out)).modelspace().query("CIRCLE")
+
+
+def test_version_is_reported(client):
+    from dxfconv import __version__
+    assert client.get("/api/version").json() == {"version": __version__}

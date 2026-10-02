@@ -771,6 +771,8 @@ function init() {
   });
 
   window.addEventListener('resize', () => { if (S.page) render(); });
+  fetch('/api/version').then((r) => r.json())
+    .then((v) => { $('version').textContent = `v${v.version}`; }).catch(() => {});
   setupCanvas();
 }
 
