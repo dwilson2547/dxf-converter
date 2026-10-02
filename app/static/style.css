@@ -232,3 +232,13 @@ button.danger.solid { background: #a33; border-color: #a33; color: #fff; }
 .empty { padding: 14px 10px; font-size: 12.5px; color: var(--muted); text-align: center;
   line-height: 1.45; }
 .drop .error-strip { max-width: 520px; margin: 12px auto 0; text-align: left; }
+
+/* saved scans */
+.toolbar button.small { width: auto; margin: 0; }
+button.attention { box-shadow: 0 0 0 2px #e0a33e; }
+.version-list { display: flex; flex-direction: column; gap: 2px; }
+.version-row { display: flex; gap: 8px; align-items: baseline; padding: 4px 6px; border-radius: 5px;
+  font-size: 13px; }
+.version-row.current { background: #22324a; }
+.vnum { font-weight: 650; min-width: 2.2em; }
+.vlabel { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

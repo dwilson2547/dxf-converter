@@ -35,6 +35,7 @@
   <div class="stage">
     <div class="toolbar">
       <span class="file-name" id="fileName"></span>
+      <button id="saveBtn" class="primary small" hidden>Save</button>
       <span class="spacer"></span>
       <label class="chk"><input type="checkbox" id="showScan" checked> Scan</label>
       <label class="chk"><input type="checkbox" id="showRejects"> Removed</label>
@@ -56,6 +57,12 @@
     <section>
       <h2>Result</h2>
       <div id="stats" class="stats"></div>
+    </section>
+
+    <section id="versionsSection" hidden>
+      <h2>Versions</h2>
+      <div id="versionList" class="version-list"></div>
+      <div class="error-strip" id="versionsErr" hidden></div>
     </section>
 
     <section id="layersSection" hidden>
@@ -198,5 +205,6 @@
 <script src="ui.js"></script>
 <script src="api.js"></script>
 <script src="app.js"></script>
+<script src="scans.js"></script>
 </body>
 </html>

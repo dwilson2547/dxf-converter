@@ -97,6 +97,7 @@ async function initAuth() {
     } catch (_) { setLoggedOut(); return; }
   }
   renderAccount();
+  document.dispatchEvent(new CustomEvent('auth-changed'));
 }
 
 async function logout() {

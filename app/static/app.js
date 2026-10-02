@@ -85,6 +85,7 @@ function snapshot() {
   pushUndo();
   S.dirty = true;
   $('editWarn').hidden = false;
+  document.dispatchEvent(new Event('edited'));
 }
 
 function undo() {
@@ -143,6 +144,8 @@ async function upload(file) {
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'upload failed');
   const data = await res.json();
   S.id = data.id;
+  S.scan = null;                 // a new upload is anonymous work until saved
+  document.dispatchEvent(new Event('scan-changed'));
   S.inks = []; S.hiddenLayers.clear(); S.pixels = null; S.report = null;
   $('source').value = data.suggested_source || 'scan';
   $('fit_mm').value = '';
@@ -207,8 +210,10 @@ async function detect(mode = 'new') {
     S.rejects = data.rejects;
     S.report = data.report;
     S.sel.clear(); S.selVert = null;
-    S.dirty = false;
+    // A re-detect on a saved scan is an unsaved change; a fresh upload isn't.
+    S.dirty = mode === 'redetect' && !!S.scan;
     $('editWarn').hidden = true;
+    document.dispatchEvent(new Event('edited'));
 
     render();
     zoomFit();
@@ -801,7 +806,8 @@ async function leaveEditor() {
   if (S.dirty && !(await confirmDialog({
     title: 'Leave this file?', body: 'Your hand edits on this file will be lost.',
     confirmLabel: 'Discard edits', danger: true }))) return false;
-  S.id = null; S.paths = []; S.page = null; S.dirty = false;
+  S.id = null; S.paths = []; S.page = null; S.dirty = false; S.scan = null;
+  document.dispatchEvent(new Event('scan-changed'));
   $('file').value = '';
   return true;
 }
