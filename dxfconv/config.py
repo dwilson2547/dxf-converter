@@ -5,11 +5,17 @@ converts to pixels once, using the scan DPI, so the same settings behave the
 same way whether you scan at 300 or 600 DPI.
 """
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 
 
 @dataclass
 class Config:
+    # --- input -------------------------------------------------------------
+    source: str = "scan"
+    """scan  -> dark pen lines on paper, traced in grayscale.
+    photo -> a colour photo of a printed object (badge, emblem, sign); colours
+    are separated into one layer each, circles and lettering regularised."""
+
     # --- scale -------------------------------------------------------------
     dpi: float | None = None
     """Scan resolution. None means read it from the image metadata."""
@@ -18,6 +24,30 @@ class Config:
     """Correction factor applied to the finished geometry. Tracing sits the
     pen slightly outside the object, so parts come out a few tenths large;
     measure the real part, divide by the reported size, put it here."""
+
+    fit_mm: float | None = None
+    """Scale so the geometry's largest dimension is this many millimetres.
+    A photo has no meaningful DPI, so measure one thing on the real object
+    (e.g. the outer diameter of a badge) and put it here. Overrides DPI."""
+
+    # --- photo mode --------------------------------------------------------
+    colors: int = 4
+    """How many colours to separate the photo into, background included."""
+
+    inks: list[str] = field(default_factory=list)
+    """Ink colours to trace, as #rrggbb. Empty means auto: every colour that
+    covers less than a third of the object. Pick them when auto lumps a thin
+    detail in with a big area of similar colour."""
+
+    circles: bool = True
+    """Replace contours that are circles with true CIRCLE entities."""
+
+    square: bool = False
+    """Square up lettering: straight edges, square corners, shared baselines.
+    Leaves long gentle curves alone, so a swash or swoosh survives."""
+
+    upsample: int = 0
+    """Photo working resolution multiplier. 0 = auto (~3000 px long side)."""
 
     # --- ink detection -----------------------------------------------------
     flatten_mm: float = 3.0

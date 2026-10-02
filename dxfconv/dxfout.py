@@ -11,21 +11,37 @@ import ezdxf
 from ezdxf import units
 
 
-def write_dxf(paths_mm, out_path: str, cfg):
+def _layer(doc, name: str, color: str | None):
+    if name not in doc.layers:
+        layer = doc.layers.add(name, color=7)
+        if color:
+            h = color.lstrip("#")
+            layer.rgb = tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return name
+
+
+def write_dxf(paths_mm, out_path: str, cfg, meta=None):
+    """meta, when given, is one {layer, color, kind} per path. kind "circle"
+    is written as a true CIRCLE fitted to the path's points, so it survives
+    the origin shift and scale that were applied to those points."""
     doc = ezdxf.new("R2010", setup=True)
     doc.units = units.MM
     doc.header["$INSUNITS"] = 4       # millimetres
     doc.header["$MEASUREMENT"] = 1    # metric
     doc.header["$LUNITS"] = 2
 
-    if cfg.layer not in doc.layers:
-        doc.layers.add(cfg.layer, color=7)
-
     msp = doc.modelspace()
-    attribs = {"layer": cfg.layer}
 
-    for pts, closed in paths_mm:
+    for n, (pts, closed) in enumerate(paths_mm):
+        m = meta[n] if meta else {}
+        attribs = {"layer": _layer(doc, m.get("layer") or cfg.layer, m.get("color"))}
+        pts = np.asarray(pts, dtype=float)
         if len(pts) < 2:
+            continue
+        if m.get("kind") == "circle" and len(pts) >= 3:
+            c = pts.mean(axis=0)
+            r = float(np.linalg.norm(pts - c, axis=1).mean())
+            msp.add_circle((float(c[0]), float(c[1])), r, dxfattribs=attribs)
             continue
         if cfg.entity == "spline" and len(pts) >= 4:
             msp.add_spline(fit_points=[(float(x), float(y)) for x, y in pts],

@@ -12,10 +12,12 @@
 <div id="drop" class="drop">
   <div class="drop-inner">
     <h1>Scan &rarr; DXF</h1>
-    <p>Drop a scanned tracing here, or <label class="link" for="file">choose a file</label>.</p>
+    <p>Drop a scanned tracing or a photo of a badge here, or
+       <label class="link" for="file">choose a file</label>.</p>
     <input type="file" id="file" accept=".png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp" hidden>
     <p class="hint">Scan at 300 DPI or better. Scale is read from the image, so the
-       part lands in CAD at its real size.</p>
+       part lands in CAD at its real size. Colour photos switch to photo mode:
+       one layer per ink colour, scaled by a size you measure.</p>
   </div>
 </div>
 
@@ -46,6 +48,12 @@
       <div id="stats" class="stats"></div>
     </section>
 
+    <section id="layersSection" hidden>
+      <h2>Layers</h2>
+      <p class="hint">Unticked layers are hidden and left out of the DXF.</p>
+      <div id="layerList" class="layer-list"></div>
+    </section>
+
     <section>
       <h2>Paths <span class="muted" id="pathCount"></span></h2>
       <p class="hint">Shortest first &mdash; leftover dirt sorts to the top.
@@ -56,6 +64,31 @@
 
     <section>
       <h2>Detection</h2>
+      <label>Source
+        <select id="source">
+          <option value="scan">Scan — pen lines on paper</option>
+          <option value="photo">Photo — printed colours, a layer each</option>
+        </select>
+      </label>
+      <label>Largest dimension (mm)
+        <input type="number" id="fit_mm" placeholder="from DPI" min="0.1" step="0.1"></label>
+      <p class="hint" id="fitHint"></p>
+
+      <div id="photoOpts">
+        <label>Colours <span class="val" id="colorsVal"></span>
+          <input type="range" id="colors" min="2" max="8" step="1"></label>
+        <div class="inks">
+          <span class="k">Inks</span>
+          <span id="inkChips" class="chips"></span>
+          <button id="pickInk" class="ghost small" title="Click a colour on the image">Pick</button>
+        </div>
+        <p class="hint" id="inkHint">Auto: every colour smaller than a third of the object.
+           Pick colours when a thin detail is lumped in with a big area.</p>
+        <label class="chk"><input type="checkbox" id="circles"> True circles</label>
+        <label class="chk"><input type="checkbox" id="square"> Square up lettering</label>
+      </div>
+
+      <div id="scanOpts">
       <label>Mode
         <select id="mode">
           <option value="outline">Outline — both stroke edges</option>
@@ -92,6 +125,7 @@
         <label>DPI override
           <input type="number" id="dpi" placeholder="from image" min="50" max="2400"></label>
       </details>
+      </div>
 
       <button id="reconvert">Re-detect</button>
       <p class="hint warn" id="editWarn" hidden>Re-detecting discards your edits.</p>

@@ -14,7 +14,8 @@ from .pipeline import convert
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="dxfconv",
-        description="Convert a scanned pen tracing into a clean, to-scale DXF.")
+        description="Convert a scanned pen tracing, or a photo of a printed "
+                    "emblem, into a clean, to-scale DXF.")
     p.add_argument("image")
     p.add_argument("-o", "--out", help="output .dxf (default: alongside input)")
     p.add_argument("-p", "--preview", nargs="?", const="auto",
@@ -22,10 +23,27 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help="print the report as JSON")
 
     d = Config()
+    p.add_argument("--source", choices=["scan", "photo"], default=d.source,
+                   help="scan: pen lines on paper; photo: colour photo, a layer per ink")
+
     g = p.add_argument_group("scale")
     g.add_argument("--dpi", type=float, help="override scan DPI")
+    g.add_argument("--fit-mm", type=float,
+                   help="scale so the largest dimension is this many mm")
     g.add_argument("--scale", type=float, default=d.scale,
                    help="correction factor for the finished geometry")
+
+    g = p.add_argument_group("photo mode")
+    g.add_argument("--colors", type=int, default=d.colors,
+                   help="colours to separate into, background included")
+    g.add_argument("--ink", action="append", default=[], metavar="#RRGGBB",
+                   help="trace this colour (repeatable); default picks automatically")
+    g.add_argument("--no-circles", dest="circles", action="store_false",
+                   help="don't turn circular contours into CIRCLE entities")
+    g.add_argument("--square", action="store_true",
+                   help="square up lettering: straight edges, square corners")
+    g.add_argument("--upsample", type=int, default=d.upsample,
+                   help="working resolution multiplier (0 = auto)")
 
     g = p.add_argument_group("ink detection")
     g.add_argument("--flatten-mm", type=float, default=d.flatten_mm)
@@ -56,6 +74,13 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
 
     cfg = Config(
+        source=args.source,
+        fit_mm=args.fit_mm,
+        colors=args.colors,
+        inks=args.ink,
+        circles=args.circles,
+        square=args.square,
+        upsample=args.upsample,
         dpi=args.dpi,
         scale=args.scale,
         flatten_mm=args.flatten_mm,
@@ -88,6 +113,26 @@ def main(argv=None) -> int:
         return 0
 
     pre, vec, ext = report["preprocess"], report["vectorize"], report["extents_mm"]
+    if report["source"] == "photo":
+        pal = pre["palette"]
+        print(f"  photo     {pre['upsample']}x working resolution, "
+              f"scale {pre['px_per_mm']:.2f} px/mm ({report['dpi_source']})")
+        print(f"  colours   background {pal['background']}, "
+              f"inks {' '.join(pal['inks'])} ({'auto' if pal['auto'] else 'picked'})")
+        print(f"  cleaned   {pre['dropped_small']} specks, "
+              f"{pre['dropped_halo']} halo slivers, "
+              f"{pre['dropped_contrast']} low-contrast blobs dropped")
+        for layer in pre["layers"]:
+            print(f"  layer     {layer['name']:<8} {layer['color']}  {layer['paths']} paths")
+        print(f"  shapes    {vec['circles']} circles, "
+              f"{vec['kept'] - vec['circles']} outlines, {report['vertices']} vertices")
+        if ext:
+            print(f"  size      {ext['width_mm']:.2f} x {ext['height_mm']:.2f} mm")
+        print(f"  wrote     {report['dxf']}")
+        if prev:
+            print(f"            {prev}")
+        return 0
+
     print(f"  scan      {report['dpi']:g} DPI  ({report['dpi_source']})")
     print(f"  ink       {pre['kept']} regions kept, "
           f"{pre['dropped_border']} border artifacts, "

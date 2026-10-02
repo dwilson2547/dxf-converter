@@ -103,6 +103,65 @@ against the edge. Measure the real part, divide by the reported size, and pass t
 | `--simplify-mm` | `0.05` | Vertex budget. Raise for a lighter sketch |
 | `--entity` | `lwpolyline` | `lwpolyline` or `spline` |
 | `--origin` | `bbox` | `bbox` starts geometry at (0,0); `page` keeps its place on the sheet |
+| `--source` | `scan` | `scan` for pen tracings; `photo` for colour photos (see Photo mode) |
+| `--fit-mm` | — | Scale so the largest dimension is this many mm. Overrides DPI |
+| `--colors` | `4` | Photo: colours to separate into, background included |
+| `--ink` | auto | Photo: trace this `#rrggbb` colour; repeatable |
+| `--square` | off | Photo: square up lettering |
+| `--no-circles` | — | Photo: keep circular contours as polylines |
+| `--upsample` | `0` (auto) | Photo: working resolution multiplier |
+
+## Photo mode
+
+For a colour photo of a printed object — a badge, an emblem, a sign — rather than a pen tracing.
+The web UI switches to it on its own when an upload is colourful; on the CLI:
+
+```
+python3 -m dxfconv.cli badge.webp --source photo --fit-mm 76 --square \
+    --ink '#a62b0b' --ink '#af733e' --preview
+```
+
+```
+  photo     3x working resolution, scale 9.04 px/mm (fit to 76 mm)
+  colours   background #d1cfcb, inks #a62b0b #b0733d (picked)
+  cleaned   517 specks, 22 halo slivers, 20 low-contrast blobs dropped
+  layer     OUTLINE  #8a8f98  1 paths
+  layer     INK1     #a62b0b  11 paths
+  layer     INK2     #b0733d  6 paths
+  shapes    3 circles, 15 outlines, 263 vertices
+```
+
+Scan mode thresholds in grayscale, where red paint and a gold rim are the same mid-tone. Photo mode
+works in colour instead:
+
+- **One layer per ink.** Colours are clustered (k-means in Lab); the colour owning the image border
+  is background. By default every colour covering less than a third of the object is ink, and the
+  big areas — a painted field, a metal rim — are substrate. When a thin detail shares a colour
+  cluster with a big area (sparkles the same tone as a gold rim), **pick** its colour: the
+  eyedropper in the UI, `--ink '#rrggbb'` (repeatable) on the CLI. Picks add to what auto found.
+- **Three cleanup rules** per ink: specks; *halo slivers* — the blended fringe along another
+  colour's edge (or the object's own edge) that nearest-colour assignment hands to some third
+  colour; and *low-contrast blobs* — shading on a shiny rim that drifted close to an ink colour but
+  doesn't stand out from what's right around it.
+- **Shapes are classified before they're cleaned up.** Each contour is a *circle* (written as a
+  true `CIRCLE`), *rectilinear* (lettering: at least 70% of its outline on horizontal/vertical
+  edges), or *freeform* (a swoosh, a tapered sparkle). A shape that runs into a ring is cut free
+  first, so the ring still fits as a circle.
+- **`--square`** applies to rectilinear shapes only: edges snapped exactly straight, bevelled
+  corners made square, counters made rectangles, and cap line/baseline/slit lines shared across
+  letters. The decision which edges are straight is made on a coarse outline, so a tapered stroke
+  stays a taper instead of turning into stairs. Freeform shapes get corner-preserving smoothing.
+- **Scale from one measurement.** A photo has no DPI. Measure the real object's largest dimension
+  (a badge's diameter) and pass `--fit-mm`, or enter it in the UI. It works in scan mode too.
+- The object's silhouette is emitted as layer `OUTLINE`. In the UI, untick a layer to hide it and
+  leave it out of the DXF; dragging a point on a circle turns it back into a polyline.
+
+Tolerances in photo mode are in source pixels (`dxfconv/photo.py` constants), since what they remove
+— blur, JPEG blocking — is pixel-scale whatever the object's size.
+
+Known limits: a letter fused to a freeform shape (an initial joined to a swash) is classified with
+the swash and is smoothed, not squared. Single-pixel jogs can survive on letters from a
+low-resolution photo.
 
 ## If a scan gives you trouble
 
@@ -139,7 +198,8 @@ kubectl -n dxf-converter rollout restart deploy/dxf-converter
 
 ## Status
 
-CLI and web UI both working, 29 tests passing, deployed to the cluster.
+CLI and web UI both working, scan and photo modes, 48 tests passing. The cluster deployment predates
+photo mode until the image is rebuilt and pushed.
 
 Nothing persists across a restart — uploads live in a temp directory (an `emptyDir` in the
 cluster) keyed by id. That pins the deployment to one replica; a restart just means re-uploading

@@ -38,6 +38,13 @@ app = FastAPI(title="dxf-converter")
 
 
 class Settings(BaseModel):
+    source: str = "scan"
+    fit_mm: float | None = None
+    colors: int = 4
+    inks: list[str] = []
+    circles: bool = True
+    square: bool = False
+    upsample: int = 0
     dpi: float | None = None
     scale: float = 1.0
     flatten_mm: float = 3.0
@@ -59,6 +66,9 @@ class Settings(BaseModel):
 class Path(BaseModel):
     points: list[list[float]]
     closed: bool = False
+    layer: str | None = None
+    color: str | None = None
+    kind: str = "poly"          # "circle" is written as a true CIRCLE
 
 
 class ExportRequest(BaseModel):
@@ -100,7 +110,28 @@ async def upload(file: UploadFile = File(...)):
     with open(os.path.join(folder, "scan" + ext), "wb") as fh:
         fh.write(data)
 
-    return {"id": upload_id, "name": file.filename}
+    return {"id": upload_id, "name": file.filename,
+            "suggested_source": _suggest_source(data)}
+
+
+def _suggest_source(data: bytes) -> str:
+    """A pen scan is near-grey; a photo of a printed badge is not."""
+    import cv2
+    img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        try:                                   # webp/tiff cv2 can't read
+            import io
+            from PIL import Image
+            with Image.open(io.BytesIO(data)) as im:
+                img = cv2.cvtColor(np.array(im.convert("RGB")), cv2.COLOR_RGB2BGR)
+        except Exception:                      # noqa: BLE001
+            return "scan"
+    h, w = img.shape[:2]
+    k = 400 / max(h, w)
+    if k < 1:
+        img = cv2.resize(img, (int(w * k), int(h * k)), interpolation=cv2.INTER_AREA)
+    sat = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)[..., 1]
+    return "photo" if (sat > 60).mean() > 0.15 else "scan"
 
 
 @app.get("/api/scan/{upload_id}")
@@ -119,11 +150,19 @@ def convert_upload(upload_id: str, settings: Settings):
     rejects = [r for r in report["preprocess"].get("rejects", [])]
     px_per_mm = report["preprocess"]["px_per_mm"] / settings.scale
 
+    pre, meta = report["preprocess"], report["meta"]
     return JSONResponse({
         "page": page,
-        "paths": [{"points": np.asarray(p).round(4).tolist(), "closed": bool(c)}
-                  for p, c in paths_mm],
+        "paths": [{"points": np.asarray(p).round(4).tolist(), "closed": bool(c),
+                   "layer": m["layer"], "color": m["color"], "kind": m["kind"]}
+                  for (p, c), m in zip(paths_mm, meta)],
         "report": {
+            "source": report["source"],
+            "layers": pre.get("layers"),
+            "palette": pre.get("palette"),
+            "dropped_halo": pre.get("dropped_halo", 0),
+            "dropped_contrast": pre.get("dropped_contrast", 0),
+            "circles": report["vectorize"].get("circles", 0),
             "dpi": report["dpi"],
             "dpi_source": report["dpi_source"],
             "kept": report["preprocess"]["kept"],
@@ -150,16 +189,18 @@ def convert_upload(upload_id: str, settings: Settings):
 def export(upload_id: str, req: ExportRequest):
     _scan_path(upload_id)          # validates the id
 
-    paths = [(np.asarray(p.points, dtype=float) * req.scale, p.closed)
-             for p in req.paths if len(p.points) >= 2]
+    keep = [p for p in req.paths if len(p.points) >= 2]
+    paths = [(np.asarray(p.points, dtype=float) * req.scale, p.closed) for p in keep]
     if not paths:
         raise HTTPException(400, "nothing to export")
+    meta = [{"layer": p.layer or req.layer, "color": p.color, "kind": p.kind}
+            for p in keep]
 
     paths = apply_origin(paths, req.origin)
 
     cfg = Config(entity=req.entity, layer=req.layer, origin=req.origin)
     out = os.path.join(WORKDIR, upload_id, "out.dxf")
-    dxfout.write_dxf(paths, out, cfg)
+    dxfout.write_dxf(paths, out, cfg, meta)
 
     safe = "".join(c for c in req.filename if c.isalnum() or c in "-_") or "profile"
     return FileResponse(out, media_type="application/dxf",

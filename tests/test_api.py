@@ -194,3 +194,60 @@ def test_discard_removes_the_upload(client):
     uid = upload(client)
     assert client.delete(f"/api/upload/{uid}").status_code == 200
     assert client.get(f"/api/scan/{uid}").status_code == 404
+
+
+# --- photo mode -----------------------------------------------------------
+
+def photo_bytes():
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import tempfile
+    import pathlib
+    from test_photo import badge
+    with tempfile.TemporaryDirectory() as d:
+        return pathlib.Path(badge(pathlib.Path(d))).read_bytes()
+
+
+def test_upload_suggests_photo_mode_for_a_colour_image(client):
+    res = client.post("/api/upload", files={"file": ("b.png", photo_bytes(), "image/png")})
+    assert res.json()["suggested_source"] == "photo"
+    res = client.post("/api/upload", files={"file": ("s.png", scan_bytes(), "image/png")})
+    assert res.json()["suggested_source"] == "scan"
+
+
+def test_photo_convert_returns_layers_and_circles(client):
+    uid = upload(client, photo_bytes(), "b.png")
+    data = client.post(f"/api/convert/{uid}",
+                       json={"source": "photo", "fit_mm": 76}).json()
+    assert data["report"]["source"] == "photo"
+    assert {p["layer"] for p in data["paths"]} == {"OUTLINE", "INK1"}
+    assert sum(p["kind"] == "circle" for p in data["paths"]) == 3
+    assert data["report"]["palette"]["inks"]
+
+
+def test_photo_export_keeps_layers_and_circles(client, tmp_path):
+    """What the editor sends back must come out as the same layers, with
+    circles still CIRCLE entities after the origin shift."""
+    uid = upload(client, photo_bytes(), "b.png")
+    paths = client.post(f"/api/convert/{uid}",
+                        json={"source": "photo", "fit_mm": 76}).json()["paths"]
+    res = client.post(f"/api/export/{uid}", json={"paths": paths, "origin": "bbox"})
+    out = tmp_path / "p.dxf"
+    out.write_bytes(res.content)
+    doc = ezdxf.readfile(str(out))
+    circles = doc.modelspace().query("CIRCLE")
+    assert len(circles) == 3
+    outer = max(circles, key=lambda e: e.dxf.radius)
+    assert outer.dxf.radius == pytest.approx(38.0, abs=0.1)
+    assert outer.dxf.center[0] == pytest.approx(38.0, abs=0.1)     # bbox origin
+    assert {e.dxf.layer for e in doc.modelspace()} == {"OUTLINE", "INK1"}
+
+
+def test_edited_circle_exports_as_a_polyline(client, tmp_path):
+    uid = upload(client, photo_bytes(), "b.png")
+    paths = client.post(f"/api/convert/{uid}", json={"source": "photo"}).json()["paths"]
+    for p in paths:
+        p["kind"] = "poly"            # what the editor does on a point drag
+    res = client.post(f"/api/export/{uid}", json={"paths": paths})
+    out = tmp_path / "p.dxf"
+    out.write_bytes(res.content)
+    assert not ezdxf.readfile(str(out)).modelspace().query("CIRCLE")

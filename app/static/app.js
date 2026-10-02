@@ -20,13 +20,21 @@ const S = {
   undo: [],
   redo: [],
   dirty: false,
+  inks: [],               // picked ink colours (photo mode); empty = auto
+  hiddenLayers: new Set(),
+  picking: false,
+  pixels: null,           // the photo, drawn to a canvas for the eyedropper
 };
 
 const SETTINGS = ['mode', 'min_length_mm', 'border_margin_mm', 'simplify_mm',
   'smooth_mm', 'threshold', 'flatten_mm', 'close_gaps_mm', 'min_area_mm2',
   'prune_spur_mm'];
 
+const PHOTO_SETTINGS = ['colors'];
+const PHOTO_FLAGS = ['circles', 'square'];
+
 const DEFAULTS = {
+  colors: 4, circles: true, square: false,
   mode: 'outline', min_length_mm: 6, border_margin_mm: 3, simplify_mm: 0.05,
   smooth_mm: 0.6, threshold: 'otsu', flatten_mm: 3, close_gaps_mm: 0,
   min_area_mm2: 0.3, prune_spur_mm: 1.5,
@@ -100,6 +108,11 @@ async function upload(file) {
   if (!res.ok) throw new Error((await res.json()).detail || 'upload failed');
   const data = await res.json();
   S.id = data.id;
+  S.inks = []; S.hiddenLayers.clear(); S.pixels = null; S.report = null;
+  $('source').value = data.suggested_source || 'scan';
+  $('fit_mm').value = '';
+  syncLabels();
+  renderInks();
   $('fileName').textContent = data.name;
   $('editor').hidden = false;
   $('drop').style.display = 'none';
@@ -114,6 +127,12 @@ function readSettings() {
   }
   const dpi = $('dpi').value.trim();
   if (dpi) s.dpi = parseFloat(dpi);
+  s.source = $('source').value;
+  const fit = $('fit_mm').value.trim();
+  if (fit) s.fit_mm = parseFloat(fit);
+  for (const key of PHOTO_SETTINGS) s[key] = parseInt($(key).value, 10);
+  for (const key of PHOTO_FLAGS) s[key] = $(key).checked;
+  s.inks = S.inks;
   return s;
 }
 
@@ -129,7 +148,9 @@ async function detect() {
     const data = await res.json();
 
     S.page = data.page;
-    S.paths = data.paths.map((p) => ({ points: p.points, closed: p.closed }));
+    S.paths = data.paths.map((p) => ({
+      points: p.points, closed: p.closed, layer: p.layer, color: p.color, kind: p.kind,
+    }));
     S.rejects = data.rejects;
     S.report = data.report;
     S.sel.clear(); S.selVert = null;
@@ -139,12 +160,121 @@ async function detect() {
 
     render();
     zoomFit();
+    renderInks();
     $('status').textContent =
       `${data.report.paths} paths · ${data.report.vertices} points`;
   } catch (err) {
     toast(err.message, true);
     $('status').textContent = 'Detection failed';
   }
+}
+
+/* ---------- layers ---------- */
+
+const visible = (p) => !S.hiddenLayers.has(p.layer);
+
+function layers() {
+  const seen = new Map();
+  for (const p of S.paths) {
+    const key = p.layer || 'PROFILE';
+    if (!seen.has(key)) seen.set(key, { name: key, color: p.color, n: 0 });
+    seen.get(key).n += 1;
+  }
+  return [...seen.values()];
+}
+
+function renderLayers() {
+  const ls = layers();
+  $('layersSection').hidden = ls.length < 2;
+  const list = $('layerList');
+  list.innerHTML = '';
+  for (const l of ls) {
+    const row = document.createElement('label');
+    row.className = 'layer-row';
+    row.innerHTML = `<input type="checkbox" ${S.hiddenLayers.has(l.name) ? '' : 'checked'}>
+      <span class="swatch" style="background:${l.color || '#2fbf71'}"></span>
+      <span>${l.name}</span><span class="count">${l.n}</span>`;
+    row.querySelector('input').addEventListener('change', (e) => {
+      if (e.target.checked) S.hiddenLayers.delete(l.name);
+      else S.hiddenLayers.add(l.name);
+      S.sel.clear(); S.selVert = null;
+      render();
+    });
+    list.appendChild(row);
+  }
+}
+
+/* ---------- eyedropper ---------- */
+
+function renderInks() {
+  const box = $('inkChips');
+  box.innerHTML = '';
+  const auto = !S.inks.length;
+  const shown = auto ? ((S.report && S.report.palette && S.report.palette.inks) || []) : S.inks;
+  for (const hex of shown) {
+    const chip = document.createElement('span');
+    chip.className = 'chip' + (auto ? ' auto' : '');
+    chip.innerHTML = `<span class="swatch" style="background:${hex}"></span>${hex}`;
+    if (!auto) {
+      chip.title = 'Remove';
+      chip.onclick = () => {
+        S.inks = S.inks.filter((h) => h !== hex);
+        renderInks();
+        redetect();
+      };
+    }
+    box.appendChild(chip);
+  }
+  if (auto && !shown.length) box.innerHTML = '<span class="muted">auto</span>';
+  $('inkHint').hidden = !auto;
+}
+
+function loadPixels() {
+  if (S.pixels) return Promise.resolve(S.pixels);
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0);
+      S.pixels = { ctx, w: c.width, h: c.height };
+      resolve(S.pixels);
+    };
+    img.onerror = () => reject(new Error('could not read the image for picking'));
+    img.src = `/api/scan/${S.id}`;
+  });
+}
+
+async function pickAt(lx, ly) {
+  const px = await loadPixels();
+  const x = Math.round(lx / S.page.width_mm * px.w);
+  const y = Math.round(ly / S.page.height_mm * px.h);
+  // Median of a small patch, so one noisy pixel doesn't become the ink.
+  const r = 2;
+  const d = px.ctx.getImageData(Math.max(0, x - r), Math.max(0, y - r), 2 * r + 1, 2 * r + 1).data;
+  const ch = [[], [], []];
+  for (let i = 0; i < d.length; i += 4) for (let k = 0; k < 3; k++) ch[k].push(d[i + k]);
+  const med = ch.map((v) => v.sort((a, b) => a - b)[v.length >> 1]);
+  const hex = '#' + med.map((v) => v.toString(16).padStart(2, '0')).join('');
+  // The first pick adds to what auto found rather than replacing it.
+  if (!S.inks.length && S.report && S.report.palette) S.inks = [...S.report.palette.inks];
+  if (!S.inks.includes(hex)) S.inks.push(hex);
+  setPicking(false);
+  renderInks();
+  redetect();
+}
+
+function setPicking(on) {
+  S.picking = on;
+  $('pickInk').classList.toggle('active', on);
+  $('svg').classList.toggle('picking', on);
+  $('status').textContent = on ? 'Click an ink colour on the image…' : $('status').textContent;
+}
+
+function redetect() {
+  if (S.dirty && !confirm('Re-detecting discards your edits. Continue?')) return;
+  detect();
 }
 
 /* ---------- geometry ---------- */
@@ -223,12 +353,15 @@ function render() {
 
   // Geometry: a fat invisible hit line under a thin visible one.
   S.paths.forEach((p, i) => {
+    if (!visible(p)) return;
     const d = dParam(p);
     const hit = el('path', { d, 'stroke-width': 8 / k }, 'geom-hit');
     hit.dataset.path = i;
     g.appendChild(hit);
-    g.appendChild(el('path', { d, 'stroke-width': 1.6 / k },
-                     'geom' + (S.sel.has(i) ? ' sel' : '')));
+    const line = el('path', { d, 'stroke-width': 1.6 / k },
+                    'geom' + (S.sel.has(i) ? ' sel' : ''));
+    if (p.color && !S.sel.has(i)) line.style.stroke = p.color;
+    g.appendChild(line);
   });
 
   // Vertices of the selection only — all of them at once is unreadable.
@@ -250,6 +383,7 @@ function render() {
   }
 
   renderStats();
+  renderLayers();
   renderPathList();
   $('delSelected').disabled = S.sel.size === 0;
   $('undo').disabled = !S.undo.length;
@@ -265,6 +399,18 @@ function renderStats() {
     : '—';
   const verts = S.paths.reduce((n, p) => n + p.points.length, 0);
 
+  if (r.source === 'photo') {
+    $('stats').innerHTML = `
+      <span class="k">Size</span><span class="v big">${size}</span>
+      <span class="k">Scale</span><span class="v">${r.dpi_source}</span>
+      <span class="k">Paths</span><span class="v">${S.paths.length}</span>
+      <span class="k">Circles</span><span class="v">${S.paths.filter((p) => p.kind === 'circle').length}</span>
+      <span class="k">Points</span><span class="v">${verts}</span>
+      <span class="k">Specks</span><span class="v">${r.dropped_small}</span>
+      <span class="k">Halo slivers</span><span class="v">${r.dropped_halo}</span>
+      <span class="k">Low contrast</span><span class="v">${r.dropped_contrast}</span>`;
+    return;
+  }
   $('stats').innerHTML = `
     <span class="k">Size</span><span class="v big">${size}</span>
     <span class="k">Scan</span><span class="v">${r.dpi} DPI</span>
@@ -281,7 +427,8 @@ function renderPathList() {
   $('pathCount').textContent = S.paths.length ? `(${S.paths.length})` : '';
 
   const rows = S.paths
-    .map((p, i) => ({ i, len: pathLength(p), n: p.points.length, closed: p.closed }))
+    .map((p, i) => ({ i, p, len: pathLength(p), n: p.points.length, closed: p.closed }))
+    .filter((row) => visible(row.p))
     .sort((a, b) => a.len - b.len);
 
   for (const row of rows) {
@@ -289,7 +436,8 @@ function renderPathList() {
     div.className = 'path-row' + (S.sel.has(row.i) ? ' sel' : '');
     div.innerHTML = `
       <span>#${row.i}</span>
-      <span class="tag">${row.closed ? 'closed' : 'open'}</span>
+      ${row.p.color ? `<span class="swatch" style="background:${row.p.color}"></span>` : ''}
+      <span class="tag">${row.p.kind === 'circle' ? 'circle' : (row.closed ? 'closed' : 'open')}</span>
       <span class="tag">${row.n} pts</span>
       <span class="len">${row.len.toFixed(1)} mm</span>
       <span class="del" title="Delete">✕</span>`;
@@ -359,6 +507,11 @@ function setupCanvas() {
 
   svg.addEventListener('pointerdown', (e) => {
     if (!S.page) return;
+    if (S.picking) {
+      const [lx, ly] = screenToLocal(e);
+      pickAt(lx, ly).catch((err) => toast(err.message, true));
+      return;
+    }
     svg.setPointerCapture(e.pointerId);
     const target = e.target;
 
@@ -366,6 +519,7 @@ function setupCanvas() {
       const pi = +target.dataset.path, vi = +target.dataset.index;
       S.selVert = { path: pi, index: vi };
       snapshot();
+      S.paths[pi].kind = 'poly';   // a hand-moved point means it's no longer a circle
       mode = 'vert';
       start = { pi, vi };
       render();
@@ -440,6 +594,7 @@ function selectInBand(x0, y0, x1, y1, additive) {
   const hi = [Math.max(x0, x1), Math.max(y0, y1)];
   if (!additive) S.sel.clear();
   S.paths.forEach((p, i) => {
+    if (!visible(p)) return;
     // A path counts as selected when every point of it is inside the band,
     // so brushing past a big curve doesn't sweep it up with the dirt.
     const inside = p.points.every(([mx, my]) => {
@@ -469,6 +624,7 @@ function insertPoint(pi, [lx, ly]) {
   }
 
   snapshot();
+  p.kind = 'poly';
   p.points.splice(best.at, 0, target);
   S.sel.clear(); S.sel.add(pi);
   S.selVert = { path: pi, index: best.at };
@@ -480,6 +636,7 @@ function deleteSelection() {
     const p = S.paths[S.selVert.path];
     if (p && p.points.length > 2) {
       snapshot();
+      p.kind = 'poly';
       p.points.splice(S.selVert.index, 1);
       S.selVert = null;
       render();
@@ -499,14 +656,15 @@ function deleteSelection() {
 /* ---------- export ---------- */
 
 async function exportDxf() {
-  if (!S.paths.length) { toast('Nothing to export', true); return; }
+  const out = S.paths.filter(visible);
+  if (!out.length) { toast('Nothing to export', true); return; }
   $('export').disabled = true;
   try {
     const res = await fetch(`/api/export/${S.id}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        paths: S.paths,
+        paths: out,
         origin: $('expOrigin').value,
         entity: $('expEntity').value,
         scale: parseFloat($('expScale').value) || 1,
@@ -544,15 +702,26 @@ function syncLabels() {
     $(pairs[key]).textContent = parseFloat($(key).value).toFixed(2) + unit;
   }
   $('modeHint').textContent = MODE_HINT[$('mode').value];
+  $('colorsVal').textContent = $('colors').value;
+  const photo = $('source').value === 'photo';
+  $('photoOpts').hidden = !photo;
+  $('scanOpts').hidden = photo;
+  $('fitHint').textContent = photo
+    ? 'A photo has no real scale: measure the object (e.g. a badge\'s diameter) and enter it.'
+    : 'Optional — overrides the scan DPI.';
 }
 
 function init() {
-  for (const key in DEFAULTS) $(key).value = DEFAULTS[key];
+  for (const key in DEFAULTS) {
+    if (PHOTO_FLAGS.includes(key)) $(key).checked = DEFAULTS[key];
+    else $(key).value = DEFAULTS[key];
+  }
   syncLabels();
 
-  for (const key of SETTINGS) {
+  for (const key of [...SETTINGS, ...PHOTO_SETTINGS, 'source']) {
     $(key).addEventListener('input', syncLabels);
   }
+  $('pickInk').addEventListener('click', () => setPicking(!S.picking));
 
   const drop = $('drop');
   const handle = async (file) => {
@@ -593,6 +762,7 @@ function init() {
     if (e.key === 'Delete' || e.key === 'Backspace') {
       e.preventDefault(); deleteSelection();
     } else if (e.key === 'Escape') {
+      if (S.picking) setPicking(false);
       S.sel.clear(); S.selVert = null; render();
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
       e.preventDefault();

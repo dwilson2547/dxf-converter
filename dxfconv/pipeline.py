@@ -7,7 +7,7 @@ import os
 import numpy as np
 
 from .config import Config
-from . import preprocess, vectorize, dxfout, preview
+from . import preprocess, vectorize, dxfout, preview, photo
 
 
 def extract(image_path: str, cfg: Config | None = None):
@@ -16,13 +16,33 @@ def extract(image_path: str, cfg: Config | None = None):
     Paths come back in millimetres with the page origin kept, so they still
     line up with the scan image. That is what the editor needs; moving the
     geometry to its bounding box is deferred to export.
+
+    report["meta"] holds one {layer, color, kind} per path. Scan mode puts
+    everything on cfg.layer; photo mode has a layer per ink colour, and
+    kind == "circle" marks a path to write as a true CIRCLE.
     """
     cfg = cfg or Config()
 
-    gray, mask, dpi, pre_report = preprocess.build_mask(image_path, cfg)
-    px_per_mm = cfg.px_per_mm(dpi)
+    if cfg.source == "photo":
+        gray, paths_px, meta, dpi, sub = photo.extract(image_path, cfg)
+        pre_report, vec_report = sub["preprocess"], sub["vectorize"]
+    else:
+        gray, mask, dpi, pre_report = preprocess.build_mask(image_path, cfg)
+        paths_px, vec_report = vectorize.build_paths(
+            mask, cfg, cfg.px_per_mm(dpi))
+        meta = [{"layer": cfg.layer, "color": None, "kind": "poly"}
+                for _ in paths_px]
 
-    paths_px, vec_report = vectorize.build_paths(mask, cfg, px_per_mm)
+    px_per_mm = cfg.px_per_mm(dpi)
+    if cfg.fit_mm and paths_px:
+        pts = np.vstack([p for p, _ in paths_px])
+        span = float((pts.max(axis=0) - pts.min(axis=0)).max())
+        if span > 0:
+            px_per_mm = span / cfg.fit_mm
+            dpi = px_per_mm * 25.4
+            pre_report["dpi_source"] = f"fit to {cfg.fit_mm:g} mm"
+    pre_report["px_per_mm"] = px_per_mm
+
     paths_mm = vectorize.to_mm(paths_px, gray.shape[0], px_per_mm,
                                origin="page", scale=cfg.scale)
 
@@ -33,6 +53,8 @@ def extract(image_path: str, cfg: Config | None = None):
         "dpi_source": pre_report["dpi_source"],
     }
     report = {
+        "source": cfg.source,
+        "meta": meta,
         "dpi": dpi,
         "dpi_source": pre_report["dpi_source"],
         "preprocess": pre_report,
@@ -57,7 +79,7 @@ def convert(image_path: str, out_dxf: str, cfg: Config | None = None,
     paths_mm = apply_origin(paths_mm, cfg.origin)
 
     os.makedirs(os.path.dirname(os.path.abspath(out_dxf)), exist_ok=True)
-    dxfout.write_dxf(paths_mm, out_dxf, cfg)
+    dxfout.write_dxf(paths_mm, out_dxf, cfg, report["meta"])
 
     result = dict(report)
     result.update({
@@ -70,7 +92,9 @@ def convert(image_path: str, out_dxf: str, cfg: Config | None = None,
     })
 
     if preview_path:
-        preview.render(gray, paths_px, report["preprocess"], preview_path)
+        preview.render(gray, paths_px, report["preprocess"], preview_path,
+                       meta=report["meta"], color_path=image_path
+                       if cfg.source == "photo" else None)
         result["preview"] = preview_path
 
     return result
