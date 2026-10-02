@@ -4,6 +4,42 @@ Each release is a git tag `vX.Y.Z` and a Docker image `dwilson2547/dxf-converter
 (`:latest` points at the newest release). The cluster runs the version pinned in
 `helm/dxf-converter/values.yaml` — bump `image.tag` there to roll out a release.
 
+## 2.0.0 — 2026-10-02
+
+### Added
+- **Accounts.** Log in / sign up from the top bar (sign-up switchable with `ALLOW_SIGNUP`);
+  bearer-token auth in the `Authorization` header (no cookies), random tokens stored hashed,
+  30-day sliding expiry; argon2id passwords. An expired login mid-edit re-prompts and retries
+  without touching the editor. `python3 -m app.admin init-admin [--username NAME]` creates the
+  first admin with a generated password; other admin commands for users and checks.
+- **Saved scans** in Postgres + S3-compatible storage (AIStor): Save from the editor, a library
+  on Home (thumbnails, filter, sort, rename, delete), reopen exactly where you left off.
+- **Versions:** numbered, immutable, with labels, notes and lineage; load, relabel, delete.
+- **Compare:** overlay another version (dashed, flip with B, opacity) with a live table of
+  paths/points/circles/size differences and a warning when scales differ.
+- **Account:** change password (signs out other sessions), delete your own account.
+- **Admin panel:** users with their saved content; make/remove admin, reset password (shown
+  once), delete content, delete user.
+- **Ctrl+click** on a line adds a point on that segment (hold to drag it).
+
+### Changed
+- Download needs only the geometry in the browser (`POST /api/export`), so a server restart
+  can't trap work.
+- Re-detect asks before discarding hand edits and is undoable.
+- One scale control: *Largest dimension* rescales in place (undoable, edits kept); the export
+  "Scale factor" is gone.
+- Errors show where they happened; loading overlay; empty states; missing Detection controls
+  (Fixed threshold value, photo working resolution) and the single-layer export name.
+- Static files are served with `Cache-Control: no-cache`.
+
+### Fixed
+- Clicking exactly on a line did nothing (the visible line sat over the click target).
+
+### Deploy
+- New secrets `dxf-converter-db` (`DATABASE_URL`) and `dxf-converter-bucket-credentials`;
+  chart `accounts.*` values. Without them (`accounts.enabled: false`) it runs anonymously as
+  before.
+
 ## 1.0.1 — 2026-10-02
 
 ### Fixed

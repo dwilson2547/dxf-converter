@@ -2,15 +2,27 @@ image:
   repository: dwilson2547/dxf-converter
   # A release from CHANGELOG.md. Bumping this is how a release reaches the
   # cluster; :latest is pushed too, but the chart doesn't follow it.
-  tag: "1.0.1"
+  tag: "2.0.0"
   pullPolicy: IfNotPresent
 
 ingress:
   host: dxf-converter.local
   className: nginx
 
-# Uploads live in a temp dir keyed by upload id, so this must stay at one
-# replica: a second pod would 404 on an id the first one issued.
+# Accounts and saved scans (v2). Both secrets are applied by hand; templates in
+# infra/cluster-config/example-secrets/dxf-converter/. Off = anonymous only.
+accounts:
+  enabled: true
+  databaseSecret: dxf-converter-db          # key DATABASE_URL
+  allowSignup: "true"
+  s3:
+    endpoint: http://192.168.0.10:30320     # AIStor S3 API (not the console port)
+    bucket: dxf-converter
+    credentialsSecret: dxf-converter-bucket-credentials   # S3_ACCESS_KEY / S3_SECRET_KEY
+
+# Anonymous uploads live in a temp dir keyed by upload id, so this stays at
+# one replica: a second pod would 404 on an id the first one issued. (Saved
+# scans live in Postgres + the bucket and wouldn't mind.)
 # Photo mode peaks around 0.5 GB on a ~1 MP photo and 0.8-0.9 GB on a 12 MP
 # one (measured, 1.0.1). Conversions run one at a time (CONVERT_LOCK), so the
 # limit covers one big conversion plus the server, with headroom.

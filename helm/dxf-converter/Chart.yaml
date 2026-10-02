@@ -2,5 +2,5 @@ apiVersion: v2
 name: dxf-converter
 description: Scanned pen tracing or badge photo -> clean, to-scale DXF (web UI)
 type: application
-version: 1.0.1
-appVersion: "1.0.1"
+version: 2.0.0
+appVersion: "2.0.0"

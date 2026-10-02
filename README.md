@@ -230,14 +230,26 @@ docker push dwilson2547/dxf-converter:X.Y.Z && docker push dwilson2547/dxf-conve
 git tag -a vX.Y.Z -m "X.Y.Z" && git push && git push --tags
 ```
 
+Accounts and saved scans need two secrets in the `dxf-converter` namespace, applied by hand
+(templates in `infra/cluster-config/example-secrets/dxf-converter/secret.yml`):
+`dxf-converter-db` (`DATABASE_URL` for the `dxfconv` database on the cluster postgres) and
+`dxf-converter-bucket-credentials` (`S3_ACCESS_KEY`, `S3_SECRET_KEY`). The endpoint, bucket and
+`allowSignup` are chart values under `accounts`. Tables are created on first start. Create the
+first admin once, after the first 2.x rollout:
+
+```
+kubectl -n dxf-converter exec deploy/dxf-converter -- python3 -m app.admin init-admin --username <name>
+kubectl -n dxf-converter exec deploy/dxf-converter -- python3 -m app.admin check
+```
+
 Argo polls every few minutes; to roll out now:
 `kubectl -n argocd annotate app dxf-converter argocd.argoproj.io/refresh=hard --overwrite`.
 Check what's running with `curl http://dxf-converter.local/api/version`.
 
 ## Status
 
-1.0.0: CLI and web UI both working, scan and photo modes, 49 tests passing, deployed to the
-cluster.
+2.0.0: accounts, saved scans with versions and compare, admin panel; scan and photo modes;
+119 tests passing (plus one opt-in test against the real bucket); deployed to the cluster.
 
 Nothing persists across a restart — uploads live in a temp directory (an `emptyDir` in the
 cluster) keyed by id. That pins the deployment to one replica; a restart just means re-uploading

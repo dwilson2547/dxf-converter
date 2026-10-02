@@ -1,6 +1,6 @@
 # v2 plan: saved scans, versions, compare overlay
 
-Status: **phases 1-3 done** (2026-10-02): backend, scans API and the web UI (all 9 workflows verified in a browser — `.ui_dev_state.md`). Phases 4-5 remain; compare (planned as phase 4) shipped inside phase 3.
+Status: **shipped as 2.0.0** (2026-10-02). All phases done; compare (phase 4) shipped inside phase 3.
 
 ## Goal
 
@@ -152,7 +152,7 @@ Each phase ends tested and committed; release once at the end as **2.0.0**.
    versions were scaled differently; self-service password change and account deletion; admin
    password reset and promote/demote (API + UI).
 4. **UI: compare overlay + stats diff — done inside phase 3** (workflow 7).
-5. **Deploy.** Create the bucket and a service account limited to it, create the database and
+5. **Deploy — done 2026-10-02 (2.0.0).** No session secret was needed: tokens are random and stored hashed, nothing is signed. Create the bucket and a service account limited to it, create the database and
    role, apply the Kubernetes Secret (DB URL, S3 endpoint and keys, session secret — template in
    `infra/cluster-config/example-secrets/dxf-converter/`), chart env wiring, release 2.0.0. With
    state out of the pod, the one-replica rule in `values.yaml` no longer applies to saved scans
