@@ -26,8 +26,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dxfconv import __version__                              # noqa: E402
 from app import accounts, admin_api, scans                   # noqa: E402
 from app.editing import (ALLOWED, MAX_BYTES, WORKDIR, ExportRequest,  # noqa: E402
-                         Settings, convert_file, upload_path as _scan_path,
-                         write_export)
+                         Settings, convert_file, export_response,
+                         upload_path as _scan_path)
 
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -36,6 +36,18 @@ app = FastAPI(title="dxf-converter", version=__version__)
 app.include_router(accounts.router)
 app.include_router(admin_api.router)
 app.include_router(scans.router)
+
+
+@app.middleware("http")
+async def revalidate_static(request, call_next):
+    """The UI is plain static files with no build hashes in their names, so
+    tell browsers to revalidate them on every load (a cheap 304 when nothing
+    changed). Without this a release can pair a new index.html with a cached,
+    older app.js."""
+    response = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        response.headers.setdefault("Cache-Control", "no-cache")
+    return response
 
 
 @app.get("/api/version")
@@ -95,11 +107,17 @@ def convert_upload(upload_id: str, settings: Settings):
     return JSONResponse(convert_file(_scan_path(upload_id), settings))
 
 
+@app.post("/api/export")
+def export(req: ExportRequest):
+    """DXF from the posted paths alone — no upload needed."""
+    return export_response(req)
+
+
 @app.post("/api/export/{upload_id}")
-def export(upload_id: str, req: ExportRequest):
-    _scan_path(upload_id)          # validates the id
-    out, name = write_export(req, os.path.join(WORKDIR, upload_id))
-    return FileResponse(out, media_type="application/dxf", filename=name)
+def export_upload(upload_id: str, req: ExportRequest):
+    """Older path, kept for callers that still send the upload id; the id is
+    no longer needed, so a restart that lost the upload doesn't block it."""
+    return export_response(req)
 
 
 @app.delete("/api/upload/{upload_id}")

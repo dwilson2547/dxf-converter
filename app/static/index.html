@@ -129,7 +129,8 @@
       </div>
 
       <button id="reconvert">Re-detect</button>
-      <p class="hint warn" id="editWarn" hidden>Re-detecting discards your edits.</p>
+      <div class="error-strip" id="detectErr" hidden></div>
+      <p class="hint warn" id="editWarn" hidden>You have hand edits: Re-detect asks first, and Undo brings them back.</p>
     </section>
 
     <section>
@@ -150,6 +151,7 @@
       <label>Filename
         <input type="text" id="expName" value="profile"></label>
       <button id="export" class="primary">Download DXF</button>
+      <div class="error-strip" id="exportErr" hidden></div>
     </section>
 
     <section>
@@ -168,6 +170,7 @@
 </main>
 
 <div id="toast" class="toast" hidden></div>
+<script src="ui.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

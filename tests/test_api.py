@@ -256,3 +256,37 @@ def test_edited_circle_exports_as_a_polyline(client, tmp_path):
 def test_version_is_reported(client):
     from dxfconv import __version__
     assert client.get("/api/version").json() == {"version": __version__}
+
+
+# --- stateless export ---------------------------------------------------------
+
+def test_export_needs_no_upload(client, tmp_path):
+    """A restart that drops the upload must not stop anyone downloading the
+    geometry still in their editor."""
+    paths = [{"points": [[0, 0], [10, 0], [10, 10]], "closed": True}]
+    res = client.post("/api/export", json={"paths": paths, "filename": "part"})
+    assert res.status_code == 200
+    assert "part.dxf" in res.headers["content-disposition"]
+    out = tmp_path / "x.dxf"
+    out.write_bytes(res.content)
+    assert len(ezdxf.readfile(str(out)).modelspace().query("LWPOLYLINE")) == 1
+
+
+def test_old_export_route_works_after_the_upload_is_gone(client):
+    paths = [{"points": [[0, 0], [10, 0]], "closed": False}]
+    res = client.post("/api/export/0123456789abcdef", json={"paths": paths})
+    assert res.status_code == 200
+
+
+def test_export_leaves_no_temp_files(client):
+    from app.editing import WORKDIR
+    before = set(os.listdir(WORKDIR)) if os.path.isdir(WORKDIR) else set()
+    client.post("/api/export", json={"paths": [{"points": [[0, 0], [1, 1]]}]})
+    after = set(os.listdir(WORKDIR))
+    assert not [d for d in after - before if d.startswith("export-")]
+
+
+def test_static_files_are_revalidated_and_api_is_untouched(client):
+    assert client.get("/app.js").headers["cache-control"] == "no-cache"
+    assert client.get("/").headers["cache-control"] == "no-cache"
+    assert "cache-control" not in client.get("/api/version").headers

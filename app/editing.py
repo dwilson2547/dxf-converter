@@ -128,6 +128,24 @@ def convert_file(src: str, settings: Settings) -> dict:
     }
 
 
+def export_response(req: ExportRequest):
+    """Write the DXF into a fresh temp dir and send it; the dir is removed
+    once the response has gone out. Needs nothing but the posted paths, so a
+    server restart can't stop anyone downloading what's in their editor."""
+    import shutil
+    from fastapi.responses import FileResponse
+    from starlette.background import BackgroundTask
+    os.makedirs(WORKDIR, exist_ok=True)
+    out_dir = tempfile.mkdtemp(prefix="export-", dir=WORKDIR)
+    try:
+        out, name = write_export(req, out_dir)
+    except BaseException:
+        shutil.rmtree(out_dir, ignore_errors=True)
+        raise
+    return FileResponse(out, media_type="application/dxf", filename=name,
+                        background=BackgroundTask(shutil.rmtree, out_dir, True))
+
+
 def write_export(req: ExportRequest, out_dir: str) -> tuple[str, str]:
     """Write the DXF for an export request. Returns (path, download name)."""
     keep = [p for p in req.paths if len(p.points) >= 2]

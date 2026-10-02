@@ -19,14 +19,14 @@ import shutil
 import tempfile
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from .accounts import Store, current_user, get_store
 from .editing import (WORKDIR, ExportRequest, Path, Settings, convert_file,
-                      upload_path, write_export)
+                      export_response, upload_path)
 from .store import ObjectNotFound, ObjectStore
 from .store.models import Scan, User, Version, utcnow
 
@@ -323,14 +323,7 @@ def export_saved(scan_id: str, req: ExportRequest, user: User = Depends(current_
                  store: Store = Depends(get_store)):
     with store.db.session() as s:
         _owned(s, scan_id, user)
-    out_dir = tempfile.mkdtemp(prefix="export-", dir=_ensure(WORKDIR))
-    out, name = write_export(req, out_dir)
-    return FileResponse(out, media_type="application/dxf", filename=name)
-
-
-def _ensure(d: str) -> str:
-    os.makedirs(d, exist_ok=True)
-    return d
+    return export_response(req)
 
 
 # --- versions -----------------------------------------------------------------

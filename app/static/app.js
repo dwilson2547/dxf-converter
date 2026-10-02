@@ -6,7 +6,6 @@
  * two helpers cross between them; everything else stays in model space. */
 
 const SVGNS = 'http://www.w3.org/2000/svg';
-const $ = (id) => document.getElementById(id);
 
 const S = {
   id: null,
@@ -136,17 +135,33 @@ function readSettings() {
   return s;
 }
 
-async function detect() {
+/* mode 'new': a fresh upload — clean slate. mode 'redetect': same image,
+ * new settings — the paths being replaced go onto the undo stack, so a
+ * re-detect that made things worse is one Ctrl+Z away. */
+async function detect(mode = 'new') {
   $('status').textContent = 'Detecting…';
+  clearError('detectErr');
   try {
     const res = await fetch(`/api/convert/${S.id}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(readSettings()),
     });
-    if (!res.ok) throw new Error((await res.json()).detail || 'conversion failed');
+    if (!res.ok) {
+      const detail = (await res.json().catch(() => ({}))).detail || 'conversion failed';
+      const err = new Error(detail);
+      err.status = res.status;
+      throw err;
+    }
     const data = await res.json();
 
+    if (mode === 'redetect' && S.paths.length) {
+      S.undo.push(JSON.stringify(S.paths));
+      if (S.undo.length > 60) S.undo.shift();
+    } else {
+      S.undo.length = 0;
+    }
+    S.redo.length = 0;
     S.page = data.page;
     S.paths = data.paths.map((p) => ({
       points: p.points, closed: p.closed, layer: p.layer, color: p.color, kind: p.kind,
@@ -154,7 +169,6 @@ async function detect() {
     S.rejects = data.rejects;
     S.report = data.report;
     S.sel.clear(); S.selVert = null;
-    S.undo.length = 0; S.redo.length = 0;
     S.dirty = false;
     $('editWarn').hidden = true;
 
@@ -164,8 +178,13 @@ async function detect() {
     $('status').textContent =
       `${data.report.paths} paths · ${data.report.vertices} points`;
   } catch (err) {
-    toast(err.message, true);
     $('status').textContent = 'Detection failed';
+    if (err.status === 404 && S.paths.length) {
+      showError('detectErr', 'The server restarted and lost the uploaded image. Your edits '
+        + 'are still here and can be downloaded; re-upload the image to detect again.');
+    } else {
+      showError('detectErr', err.message);
+    }
   }
 }
 
@@ -272,9 +291,17 @@ function setPicking(on) {
   $('status').textContent = on ? 'Click an ink colour on the image…' : $('status').textContent;
 }
 
-function redetect() {
-  if (S.dirty && !confirm('Re-detecting discards your edits. Continue?')) return;
-  detect();
+async function redetect() {
+  if (S.dirty) {
+    const ok = await confirmDialog({
+      title: 'Re-detect?',
+      body: 'Re-detecting replaces the paths, including your hand edits. '
+        + 'You can bring them back afterwards with Undo (Ctrl+Z).',
+      confirmLabel: 'Re-detect',
+    });
+    if (!ok) return;
+  }
+  await detect('redetect');
 }
 
 /* ---------- geometry ---------- */
@@ -656,11 +683,17 @@ function deleteSelection() {
 /* ---------- export ---------- */
 
 async function exportDxf() {
+  clearError('exportErr');
   const out = S.paths.filter(visible);
-  if (!out.length) { toast('Nothing to export', true); return; }
+  if (!out.length) {
+    showError('exportErr', 'Nothing to export — every path is hidden or deleted.');
+    return;
+  }
   $('export').disabled = true;
   try {
-    const res = await fetch(`/api/export/${S.id}`, {
+    // Stateless: needs only the paths, so it works even if the server has
+    // restarted and lost the upload.
+    const res = await fetch('/api/export', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -671,7 +704,7 @@ async function exportDxf() {
         filename: $('expName').value || 'profile',
       }),
     });
-    if (!res.ok) throw new Error((await res.json()).detail || 'export failed');
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'export failed');
 
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
@@ -682,7 +715,7 @@ async function exportDxf() {
     URL.revokeObjectURL(url);
     toast('DXF downloaded');
   } catch (err) {
-    toast(err.message, true);
+    showError('exportErr', err.message);
   } finally {
     $('export').disabled = false;
   }
@@ -739,14 +772,16 @@ function init() {
   drop.addEventListener('drop', (e) => handle(e.dataTransfer.files[0]));
   $('file').addEventListener('change', (e) => handle(e.target.files[0]));
 
-  $('reconvert').addEventListener('click', detect);
+  $('reconvert').addEventListener('click', redetect);
   $('export').addEventListener('click', exportDxf);
   $('delSelected').addEventListener('click', deleteSelection);
   $('zoomFit').addEventListener('click', zoomFit);
   $('undo').addEventListener('click', undo);
   $('redo').addEventListener('click', redo);
-  $('newFile').addEventListener('click', () => {
-    if (S.dirty && !confirm('Discard your edits and start a new scan?')) return;
+  $('newFile').addEventListener('click', async () => {
+    if (S.dirty && !(await confirmDialog({
+      title: 'Start over?', body: 'Your hand edits on this file will be lost.',
+      confirmLabel: 'Discard edits', danger: true }))) return;
     S.id = null; S.paths = []; S.page = null;
     $('editor').hidden = true;
     $('drop').style.display = '';
