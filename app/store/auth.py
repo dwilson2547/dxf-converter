@@ -80,6 +80,30 @@ def set_password(s: Session, username: str, password: str) -> None:
     s.execute(delete(AuthToken).where(AuthToken.user_id == user.id))
 
 
+def change_password(s: Session, user: User, current: str, new: str,
+                    keep_token: str | None = None) -> None:
+    """The user changing their own password: needs the current one. Every
+    other session is signed out; the one making the change stays."""
+    try:
+        _hasher.verify(user.password_hash, current or "")
+    except (VerificationError, InvalidHashError):
+        raise AuthError("The current password is wrong.") from None
+    if len(new or "") < MIN_PASSWORD:
+        raise AuthError(f"Passwords must be at least {MIN_PASSWORD} characters.")
+    user.password_hash = _hasher.hash(new)
+    q = delete(AuthToken).where(AuthToken.user_id == user.id)
+    if keep_token:
+        q = q.where(AuthToken.token_hash != _token_hash(keep_token))
+    s.execute(q)
+
+
+def check_password(user: User, password: str) -> bool:
+    try:
+        return _hasher.verify(user.password_hash, password or "")
+    except (VerificationError, InvalidHashError):
+        return False
+
+
 def authenticate(s: Session, username: str, password: str) -> User:
     user = s.scalar(select(User).where(User.username == normalize(username)))
     try:

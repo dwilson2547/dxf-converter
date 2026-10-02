@@ -184,6 +184,54 @@ def logout(authorization: str | None = Header(None), store: Store = Depends(get_
     return {"ok": True}
 
 
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class Confirm(BaseModel):
+    password: str
+
+
+@router.post("/password")
+def change_password(req: PasswordChange, authorization: str | None = Header(None),
+                    user: User = Depends(current_user), store: Store = Depends(get_store)):
+    with store.db.session() as s:
+        row = s.get(User, user.id)
+        try:
+            auth.change_password(s, row, req.current_password, req.new_password,
+                                 keep_token=_bearer(authorization))
+        except auth.AuthError as exc:
+            err = str(exc)
+        else:
+            err = None
+    if err:
+        raise HTTPException(422, err)
+    return {"ok": True}
+
+
+@router.delete("/me")
+def delete_me(req: Confirm, user: User = Depends(current_user),
+              store: Store = Depends(get_store)):
+    """Delete your own account and everything you saved. Needs the password,
+    so a borrowed, unlocked browser can't do it in one click."""
+    from .store import content
+    with store.db.session() as s:
+        row = s.get(User, user.id)
+        if not auth.check_password(row, req.password):
+            err, code = "The password is wrong.", 422
+        else:
+            try:
+                gone = content.delete_user(s, store.objects, row)
+                err = None
+            except content.LastAdminError:
+                err, code = ("You're the only admin, so this account can't be deleted. "
+                             "Make someone else an admin first."), 409
+    if err:
+        raise HTTPException(code, err)
+    return {"deleted": gone}
+
+
 @router.get("/me")
 def me(user: User = Depends(current_user)):
     return {"username": user.username, "is_admin": user.is_admin,

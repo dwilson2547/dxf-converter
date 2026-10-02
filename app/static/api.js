@@ -234,9 +234,93 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && m && !m.hidden) m.hidden = true;
 });
 
-/* Filled in by workflow 8. */
-function accountDialog() {
-  toast('Account settings are coming in a later step.');
+/* ---------- account (self-service) ---------- */
+
+async function accountDialog() {
+  let me;
+  try { me = await api('/api/auth/me', { auth: true }); } catch (_) { return; }
+  const body = document.createElement('div');
+  body.innerHTML = `
+    <p><b>${escapeHtml(me.username)}</b>${me.is_admin ? ' <span class="badge">admin</span>' : ''}</p>
+    <p class="hint">Member since ${new Date(me.created_at).toLocaleDateString()}.</p>`;
+  const choice = await openDialog({
+    title: 'Account',
+    body,
+    actions: [
+      { label: 'Delete account…', kind: 'danger', value: 'delete' },
+      { label: 'Change password', kind: 'ghost', value: 'password' },
+      { label: 'Close', kind: 'primary', value: null },
+    ],
+  });
+  if (choice === 'password') return changePasswordDialog();
+  if (choice === 'delete') return deleteAccountDialog(me);
+}
+
+async function changePasswordDialog() {
+  const body = document.createElement('div');
+  body.innerHTML = `
+    <label>Current password
+      <input name="current" type="password" autocomplete="current-password"></label>
+    <label>New password
+      <input name="new" type="password" autocomplete="new-password"></label>
+    <label>Confirm new password
+      <input name="confirm" type="password" autocomplete="new-password"></label>
+    <p class="hint">At least 8 characters. Your other logged-in browsers will be signed out;
+      this one stays logged in.</p>`;
+  const done = await openDialog({
+    title: 'Change password',
+    body,
+    actions: [
+      { label: 'Cancel', kind: 'ghost', value: null },
+      { label: 'Change password', kind: 'primary', value: 'ok', submit: true },
+    ],
+    onSubmit: async (form) => {
+      const current = form.querySelector('[name=current]').value;
+      const next = form.querySelector('[name=new]').value;
+      if (!current) throw new Error('Enter your current password.');
+      if (next !== form.querySelector('[name=confirm]').value) throw new Error("The new passwords don't match.");
+      await api('/api/auth/password', { method: 'POST', auth: true,
+        json: { current_password: current, new_password: next } });
+      return true;
+    },
+  });
+  if (done) toast('Password changed — your other sessions were signed out');
+}
+
+async function deleteAccountDialog(me) {
+  const body = document.createElement('div');
+  body.innerHTML = `
+    <p>This deletes <b>${escapeHtml(me.username)}</b> and every scan and version you've saved.
+      It can't be undone.</p>
+    <label>Type your username to confirm
+      <input name="confirmName" autocomplete="off" autocapitalize="none" spellcheck="false"></label>
+    <label>Password
+      <input name="password" type="password" autocomplete="current-password"></label>`;
+  const done = await openDialog({
+    title: 'Delete your account?',
+    body,
+    actions: [
+      { label: 'Cancel', kind: 'ghost', value: null },
+      { label: 'Delete my account', kind: 'danger solid', value: 'ok', submit: true },
+    ],
+    onSubmit: async (form) => {
+      if (form.querySelector('[name=confirmName]').value.trim().toLowerCase() !== me.username) {
+        throw new Error(`Type “${me.username}” to confirm.`);
+      }
+      await api('/api/auth/me', { method: 'DELETE', auth: true,
+        json: { password: form.querySelector('[name=password]').value } });
+      return true;
+    },
+  });
+  if (!done) return;
+  setLoggedOut();
+  if (currentView !== 'home') {
+    if (typeof leaveEditor === 'function' && currentView === 'editor') {
+      S.dirty = false; await leaveEditor();
+    }
+    showView('home');
+  }
+  toast('Your account was deleted');
 }
 
 /* ---------- views ---------- */

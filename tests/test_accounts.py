@@ -474,3 +474,54 @@ def test_cli_delete_user_refuses_the_last_admin(admin_env):
     add_user(admin_env, "boss", is_admin=True)
     with pytest.raises(SystemExit, match="last admin"):
         admin(["delete-user", "boss"])
+
+
+# --- self-service account -----------------------------------------------------
+
+def test_change_password_keeps_this_session_and_ends_the_others(client, store):
+    add_user(store)
+    mine = login(client)
+    other = login(client)
+    res = client.post("/api/auth/password", headers=bearer(mine),
+                      json={"current_password": "correct horse", "new_password": "battery staple"})
+    assert res.status_code == 200
+    assert client.get("/api/auth/me", headers=bearer(mine)).status_code == 200
+    assert client.get("/api/auth/me", headers=bearer(other)).status_code == 401
+    login(client, pw="battery staple")
+
+
+def test_change_password_needs_the_current_one(client, store):
+    add_user(store)
+    tok = login(client)
+    res = client.post("/api/auth/password", headers=bearer(tok),
+                      json={"current_password": "wrong one", "new_password": "battery staple"})
+    assert res.status_code == 422 and "current password" in res.json()["detail"]
+    res = client.post("/api/auth/password", headers=bearer(tok),
+                      json={"current_password": "correct horse", "new_password": "short"})
+    assert res.status_code == 422
+    login(client)                                   # unchanged
+
+
+def test_delete_own_account_needs_the_password_and_removes_content(client, store):
+    uid = add_user(store)
+    sid = _scan_with_image(store, uid)
+    tok = login(client)
+    assert client.request("DELETE", "/api/auth/me", headers=bearer(tok),
+                          json={"password": "nope nope"}).status_code == 422
+    res = client.request("DELETE", "/api/auth/me", headers=bearer(tok),
+                         json={"password": "correct horse"})
+    assert res.status_code == 200 and res.json()["deleted"]["scans"] == 1
+    with store.db.session() as s:
+        assert s.get(User, uid) is None and s.get(Scan, sid) is None
+    with pytest.raises(ObjectNotFound):
+        store.objects.get(ObjectStore.image_key(uid, sid, ".png"))
+    assert client.get("/api/auth/me", headers=bearer(tok)).status_code == 401
+
+
+def test_the_only_admin_cannot_delete_their_own_account(client, store):
+    add_user(store, "boss", is_admin=True)
+    tok = login(client, "boss")
+    res = client.request("DELETE", "/api/auth/me", headers=bearer(tok),
+                         json={"password": "correct horse"})
+    assert res.status_code == 409
+    assert client.get("/api/auth/me", headers=bearer(tok)).status_code == 200
