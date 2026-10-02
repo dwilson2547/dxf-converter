@@ -117,12 +117,19 @@ Each phase ends tested and committed; release once at the end as **2.0.0**.
 | Anonymous use | Keep it | Quick one-off conversions shouldn't need a login. |
 | DXF files | Not stored; regenerated on export from the saved version | Paths + settings fully determine the DXF. |
 
+## Storage facts
+
+- **AIStor S3 API: `http://192.168.0.10:30320`, plain HTTP** — verified 2026-10-02:
+  `/minio/health/live` returned 200 from the workstation and from a pod in the `dxf-converter`
+  namespace. `:30321` is the web console, not the API. The race logger (robo-services) uses the
+  same endpoint.
+- **Bucket: `dxf-converter`** — created by hand 2026-10-02.
+- **Credentials:** Secret `dxf-converter-bucket-credentials` (namespace `dxf-converter`, keys
+  `S3_ACCESS_KEY` / `S3_SECRET_KEY`), template at
+  `infra/cluster-config/example-secrets/dxf-converter/secret.yml`, applied by hand. Endpoint and
+  bucket go in `values.yaml`, not the secret.
+
 ## Unknowns
 
-- **AIStor endpoint, port and TLS** — `⚠ unverified`. The workspace records only that AIStor runs
-  as a TrueNAS app (`infra/cluster-config/docs/issues/Aistor truenas tls fix.md`); its address is
-  not written down anywhere. Needed before phase 1's real-storage tests against it, and for phase 5.
-- **Whether the cluster can reach the TrueNAS box** on that port — to be checked from a pod in
-  phase 5, not assumed.
-- **Bucket and service-account creation** need an AIStor admin login. Done by hand or with `mc`
-  using admin credentials supplied at the time, never committed.
+- The database URL and session secret: added to the cluster in phase 5, alongside creating the
+  `dxfconv` database and role.
