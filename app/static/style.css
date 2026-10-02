@@ -276,3 +276,22 @@ button.attention { box-shadow: 0 0 0 2px #e0a33e; }
   border: 1px solid var(--accent); border-radius: 5px; font: inherit; font-weight: 600; }
 .library .empty { text-align: center; padding: 2rem 1rem; }
 button.danger.small { width: auto; }
+
+/* compare */
+/* Not ".ghost": that's the secondary-button class, and pointer-events:none here
+   would make every such button unclickable. */
+.ghost-path { fill: none; stroke: #f0b54a; stroke-linejoin: round; pointer-events: none; }
+.ghost-path.current-ghost { stroke: #7fb0ff; }
+.compare-front { pointer-events: none; }
+.compare-box { margin-top: 10px; padding: 10px; border: 1px solid #4a3d22; border-radius: 8px;
+  background: rgba(240, 181, 74, 0.06); font-size: 12.5px; }
+.compare-head { margin-bottom: 6px; }
+.ghost-key { display: inline-block; width: 18px; height: 0; border-top: 2px dashed #f0b54a;
+  vertical-align: middle; margin: 0 4px; }
+.warn-chip { margin: 6px 0; padding: 6px 8px; border-radius: 6px; background: rgba(224, 163, 62, 0.15);
+  border: 1px solid rgba(224, 163, 62, 0.5); color: #f3c77a; line-height: 1.4; }
+.compare-table { width: 100%; border-collapse: collapse; margin: 8px 0 4px; font-variant-numeric: tabular-nums; }
+.compare-table th, .compare-table td { padding: 2px 4px; text-align: right; font-weight: 400; }
+.compare-table th:first-child { text-align: left; color: var(--muted); }
+.compare-table thead th { color: var(--muted); font-size: 11.5px; border-bottom: 1px solid var(--line); }
+.vactions button.active { outline: 1px solid #f0b54a; color: #f3c77a; }

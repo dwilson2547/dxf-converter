@@ -161,6 +161,7 @@ async function loadVersion(number) {
     loadVersionIntoEditor(v);
     if (!S.page) await recoverPage();
     S.scan.current = number;
+    if (S.compare && S.compare.number === number) S.compare = null;
     render();
     setSaveState();
     renderVersions();
@@ -215,11 +216,126 @@ async function deleteVersion(v) {
     return;
   }
   S.scan.versions = S.scan.versions.filter((x) => x.number !== v.number);
+  if (S.compare && S.compare.number === v.number) { S.compare = null; render(); }
   if (isCurrent) { S.scan.current = null; S.dirty = true; }
   libraryStale = true;
   setSaveState();
   renderVersions();
   toast(`Deleted v${v.number}`);
+}
+
+/* ---------- compare ---------- */
+
+S.compare = null;     // { number, label, paths, settings, pageH, pageW, opacity, flip }
+
+async function startCompare(number) {
+  clearError('versionsErr');
+  try {
+    const v = await api(`/api/scans/${S.scan.id}/versions/${number}`, { auth: true });
+    const page = (v.view || {}).page || S.page;
+    S.compare = { number, label: v.label, paths: v.paths, settings: v.settings || {},
+                  pageH: page.height_mm, pageW: page.width_mm,
+                  opacity: S.compare ? S.compare.opacity : 0.7, flip: false };
+  } catch (err) {
+    showError('versionsErr', `Couldn't load v${number} to compare: ${err.message}`);
+    return;
+  }
+  render();
+  renderVersions();
+}
+
+function stopCompare() {
+  S.compare = null;
+  render();
+  renderVersions();
+}
+
+function flipCompare() {
+  if (!S.compare) return;
+  S.compare.flip = !S.compare.flip;
+  render();
+}
+
+function geomStats(paths) {
+  let lo = [Infinity, Infinity], hi = [-Infinity, -Infinity];
+  for (const p of paths) for (const [x, y] of p.points) {
+    lo = [Math.min(lo[0], x), Math.min(lo[1], y)];
+    hi = [Math.max(hi[0], x), Math.max(hi[1], y)];
+  }
+  const ok = Number.isFinite(lo[0]);
+  return { paths: paths.length, points: pointCount(paths),
+           circles: paths.filter((p) => p.kind === 'circle').length,
+           w: ok ? hi[0] - lo[0] : 0, h: ok ? hi[1] - lo[1] : 0 };
+}
+
+/* Two versions line up only if they were scaled the same way: same
+ * Largest-dimension setting (or both from DPI) and the same page size. */
+function scaleMismatch() {
+  const a = readSettings(), b = S.compare.settings;
+  const fitA = a.fit_mm ? Number(a.fit_mm) : null, fitB = b.fit_mm ? Number(b.fit_mm) : null;
+  const pageOff = Math.abs(S.compare.pageW - S.page.width_mm) / S.page.width_mm > 0.005;
+  if (!pageOff && (fitA === fitB || (fitA && fitB && Math.abs(fitA - fitB) < 0.01))) return null;
+  const desc = (fit) => (fit ? `scaled to ${fit.toFixed(2)} mm` : 'scaled from the DPI');
+  const here = S.scan.current ? `v${S.scan.current}` : 'The open geometry';
+  return `${here} is ${desc(fitA)}; v${S.compare.number} is ${desc(fitB)}. `
+    + "The overlay won't line up — compare shapes, not positions.";
+}
+
+/* The compare box is built once (renderCompare) and its numbers refreshed on
+ * every redraw (updateCompareStats), so the table follows edits, undo and
+ * rescales — and rebuilding it never interrupts a drag on the slider. */
+function renderCompare() {
+  const box = $('compareBox');
+  if (!box) return;
+  box.hidden = !S.compare;
+  if (!S.compare) { box.innerHTML = ''; return; }
+  box.innerHTML = `
+    <div class="compare-head" id="cmpHead"></div>
+    <div class="warn-chip" id="cmpWarn" hidden></div>
+    <label>Ghost opacity <span class="val" id="cmpOpacityVal"></span>
+      <input type="range" id="cmpOpacity" min="0.1" max="1" step="0.05" value="${S.compare.opacity}"></label>
+    <table class="compare-table">
+      <thead><tr><th></th><th id="cmpColA"></th><th>v${S.compare.number}</th><th>Δ</th></tr></thead>
+      <tbody id="cmpBody"></tbody>
+    </table>
+    <div class="vactions">
+      <button class="ghost small" id="cmpFlip" title="B"></button>
+      <button class="ghost small" id="cmpStop">Stop comparing</button>
+    </div>`;
+  $('cmpOpacity').oninput = (e) => {
+    S.compare.opacity = parseFloat(e.target.value);
+    render();
+  };
+  $('cmpFlip').onclick = flipCompare;
+  $('cmpStop').onclick = stopCompare;
+  updateCompareStats();
+}
+
+function updateCompareStats() {
+  if (!S.compare || !$('cmpBody')) return;
+  const a = geomStats(S.paths), b = geomStats(S.compare.paths);
+  const here = S.scan && S.scan.current ? `v${S.scan.current}${S.dirty ? ' (edited)' : ''}` : 'open (unsaved)';
+  const delta = (x, y, digits = 0) => {
+    const d = x - y;
+    if (Math.abs(d) < (digits ? 0.005 : 0.5)) return '<span class="muted">same</span>';
+    return `${d > 0 ? '+' : '−'}${Math.abs(d).toFixed(digits)}`;
+  };
+  const row = (label, x, y, digits = 0, unit = '') => `
+    <tr><th>${label}</th><td>${x.toFixed(digits)}${unit}</td><td>${y.toFixed(digits)}${unit}</td>
+    <td>${delta(x, y, digits)}</td></tr>`;
+  $('cmpHead').innerHTML = `Comparing <b>${escapeHtml(here)}</b> with
+    <span class="ghost-key"></span><b>v${S.compare.number}</b>${S.compare.label
+      ? ` <span class="muted">${escapeHtml(S.compare.label)}</span>` : ''}`;
+  $('cmpColA').textContent = here;
+  const warn = scaleMismatch();
+  $('cmpWarn').hidden = !warn;
+  $('cmpWarn').textContent = warn || '';
+  $('cmpOpacityVal').textContent = `${Math.round(S.compare.opacity * 100)}%`;
+  $('cmpFlip').textContent = `${S.compare.flip ? 'Show current in front'
+    : `Show v${S.compare.number} in front`} (B)`;
+  $('cmpBody').innerHTML = row('Paths', a.paths, b.paths) + row('Points', a.points, b.points)
+    + row('Circles', a.circles, b.circles) + row('Width', a.w, b.w, 2, ' mm')
+    + row('Height', a.h, b.h, 2, ' mm');
 }
 
 function renderVersions() {
@@ -246,15 +362,22 @@ function renderVersions() {
       ${v.note ? `<div class="vnote" title="${escapeHtml(v.note)}">${escapeHtml(v.note)}</div>` : ''}
       <div class="vactions">
         ${v.number === S.scan.current && !S.dirty ? '' : '<button class="ghost small" data-act="load">Load</button>'}
+        ${v.number === S.scan.current ? '' : S.compare && S.compare.number === v.number
+          ? '<button class="ghost small active" data-act="uncompare">Comparing</button>'
+          : '<button class="ghost small" data-act="compare">Compare</button>'}
         <button class="ghost small" data-act="edit">Label</button>
         <button class="danger small" data-act="delete" ${only ? 'disabled title="The only version — delete the scan from Home instead"' : ''}>Delete</button>
       </div>`;
     const on = (act, fn) => { const b = row.querySelector(`[data-act=${act}]`); if (b) b.onclick = fn; };
     on('load', () => loadVersion(v.number));
+    on('compare', () => startCompare(v.number));
+    on('uncompare', stopCompare);
     on('edit', () => editVersion(v));
     on('delete', () => deleteVersion(v));
     list.appendChild(row);
   }
+  $('compareHint').hidden = !only;
+  renderCompare();
 }
 
 /* ---------- library (Home) ---------- */
@@ -439,6 +562,7 @@ async function openScan(scanId, number = null) {
     S.pixels = null;
     S.id = null;
     S.scan = { id: detail.id, name: detail.name, current: n, versions: detail.version_list };
+    S.compare = null;
     loadVersionIntoEditor(version);
     $('fileName').textContent = detail.name;
     $('expName').value = detail.name.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'scan';

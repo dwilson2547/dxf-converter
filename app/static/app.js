@@ -73,6 +73,7 @@ function restore(entry) {
   S.sel.clear(); S.selVert = null;
   syncFitField();
   render();
+  document.dispatchEvent(new Event('edited'));
 }
 
 function pushUndo() {
@@ -384,8 +385,11 @@ function extents() {
   return Number.isFinite(lo[0]) ? { lo, hi } : null;
 }
 
-function dParam(p) {
-  const pts = p.points.map(toLocal);
+/* pageH: the page height the points were measured on. A compared version
+ * may have been scaled differently, so it flips Y on its own page. */
+function dParam(p, pageH = null) {
+  const h = pageH ?? S.page.height_mm;
+  const pts = p.points.map(([x, y]) => [x, h - y]);
   if (!pts.length) return '';
   let d = `M ${pts[0][0].toFixed(3)} ${pts[0][1].toFixed(3)}`;
   for (let i = 1; i < pts.length; i++) {
@@ -432,6 +436,23 @@ function render() {
     }
   }
 
+  // Compare: the other version as a ghost. Flipped, it's drawn on top in
+  // full colour and the current geometry becomes the ghost.
+  const cmp = S.compare;
+  const drawCompare = (front) => {
+    const layer = el('g', { opacity: cmp.opacity }, 'compare-layer');
+    for (const p of cmp.paths) {
+      if (!visible(p)) continue;
+      const line = el('path', { d: dParam(p, cmp.pageH), 'stroke-width': (front ? 1.6 : 1.4) / k,
+                                'stroke-dasharray': front ? 'none' : `${4 / k} ${3 / k}` },
+                      front ? 'geom compare-front' : 'ghost-path');
+      if (front && p.color) line.style.stroke = p.color;
+      layer.appendChild(line);
+    }
+    g.appendChild(layer);
+  };
+  if (cmp && !cmp.flip) drawCompare(false);
+
   // Geometry: a fat invisible hit line under a thin visible one.
   S.paths.forEach((p, i) => {
     if (!visible(p)) return;
@@ -439,11 +460,14 @@ function render() {
     const hit = el('path', { d, 'stroke-width': 8 / k }, 'geom-hit');
     hit.dataset.path = i;
     g.appendChild(hit);
+    const ghosted = cmp && cmp.flip;
     const line = el('path', { d, 'stroke-width': 1.6 / k },
-                    'geom' + (S.sel.has(i) ? ' sel' : ''));
-    if (p.color && !S.sel.has(i)) line.style.stroke = p.color;
+                    (ghosted ? 'ghost-path current-ghost' : 'geom') + (S.sel.has(i) ? ' sel' : ''));
+    if (ghosted) line.setAttribute('stroke-dasharray', `${4 / k} ${3 / k}`);
+    else if (p.color && !S.sel.has(i)) line.style.stroke = p.color;
     g.appendChild(line);
   });
+  if (cmp && cmp.flip) drawCompare(true);
 
   // Vertices of the selection only — all of them at once is unreadable.
   if ($('showVerts').checked) {
@@ -466,6 +490,7 @@ function render() {
   renderStats();
   renderLayers();
   renderPathList();
+  if (S.compare && typeof updateCompareStats === 'function') updateCompareStats();
   $('delSelected').disabled = S.sel.size === 0;
   $('undo').disabled = !S.undo.length;
   $('redo').disabled = !S.redo.length;
@@ -815,7 +840,7 @@ async function leaveEditor() {
   if (S.dirty && !(await confirmDialog({
     title: 'Leave this file?', body: 'Your hand edits on this file will be lost.',
     confirmLabel: 'Discard edits', danger: true }))) return false;
-  S.id = null; S.paths = []; S.page = null; S.dirty = false; S.scan = null;
+  S.id = null; S.paths = []; S.page = null; S.dirty = false; S.scan = null; S.compare = null;
   document.dispatchEvent(new Event('scan-changed'));
   $('file').value = '';
   return true;
@@ -875,6 +900,9 @@ function init() {
     } else if (e.key === 'Escape') {
       if (S.picking) setPicking(false);
       S.sel.clear(); S.selVert = null; render();
+    } else if ((e.key === 'b' || e.key === 'B') && !e.ctrlKey && !e.metaKey && S.compare
+               && currentView === 'editor') {
+      e.preventDefault(); flipCompare();
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
       e.preventDefault();
       e.shiftKey ? redo() : undo();
