@@ -15,6 +15,7 @@
     <p>Drop a scanned tracing or a photo of a badge here, or
        <label class="link" for="file">choose a file</label>.</p>
     <input type="file" id="file" accept=".png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp" hidden>
+    <div class="error-strip" id="dropErr" hidden></div>
     <p class="hint">Scan at 300 DPI or better. Scale is read from the image, so the
        part lands in CAD at its real size. Colour photos switch to photo mode:
        one layer per ink colour, scaled by a size you measure.</p>
@@ -36,6 +37,7 @@
       <button id="newFile" class="ghost">New scan</button>
     </div>
     <svg id="svg"></svg>
+    <div class="busy" id="busy" hidden><span class="spinner"></span>Detecting…</div>
     <div class="statusbar">
       <span id="status">Ready</span>
       <span class="spacer"></span>
@@ -87,6 +89,17 @@
            Pick colours when a thin detail is lumped in with a big area.</p>
         <label class="chk"><input type="checkbox" id="circles"> True circles</label>
         <label class="chk"><input type="checkbox" id="square"> Square up lettering</label>
+        <details>
+          <summary>Advanced</summary>
+          <label>Working resolution
+            <select id="upsample">
+              <option value="0">Auto (~3000 px long side)</option>
+              <option value="1">1× — as photographed</option>
+              <option value="2">2×</option>
+              <option value="3">3×</option>
+              <option value="4">4× — small photos, slowest</option>
+            </select></label>
+        </details>
       </div>
 
       <div id="scanOpts">
@@ -115,6 +128,8 @@
             <option value="adaptive">Adaptive — uneven lighting</option>
             <option value="fixed">Fixed</option>
           </select></label>
+        <label id="thresholdValueRow">Fixed threshold <span class="val" id="thresholdValueVal"></span>
+          <input type="range" id="threshold_value" min="1" max="254" step="1"></label>
         <label>Flatten <span class="val" id="flattenVal"></span>
           <input type="range" id="flatten_mm" min="0" max="10" step="0.5"></label>
         <label>Close gaps <span class="val" id="gapsVal"></span>
@@ -135,9 +150,8 @@
 
     <section>
       <h2>Export</h2>
-      <label>Scale factor
-        <input type="number" id="expScale" value="1" step="0.001" min="0.01"></label>
-      <p class="hint">Measure the real part, divide by the size above, put it here.</p>
+      <p class="hint">Exports at the size shown under Result. To change it, set
+         <em>Largest dimension</em> under Detection.</p>
       <label>Origin
         <select id="expOrigin">
           <option value="bbox">Bounding box at (0,0)</option>
@@ -148,6 +162,8 @@
           <option value="lwpolyline">Polyline</option>
           <option value="spline">Spline</option>
         </select></label>
+      <label id="expLayerRow">Layer name
+        <input type="text" id="expLayer" value="PROFILE"></label>
       <label>Filename
         <input type="text" id="expName" value="profile"></label>
       <button id="export" class="primary">Download DXF</button>

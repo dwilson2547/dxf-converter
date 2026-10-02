@@ -26,14 +26,14 @@ const S = {
 };
 
 const SETTINGS = ['mode', 'min_length_mm', 'border_margin_mm', 'simplify_mm',
-  'smooth_mm', 'threshold', 'flatten_mm', 'close_gaps_mm', 'min_area_mm2',
-  'prune_spur_mm'];
+  'smooth_mm', 'threshold', 'threshold_value', 'flatten_mm', 'close_gaps_mm',
+  'min_area_mm2', 'prune_spur_mm'];
 
-const PHOTO_SETTINGS = ['colors'];
+const PHOTO_SETTINGS = ['colors', 'upsample'];
 const PHOTO_FLAGS = ['circles', 'square'];
 
 const DEFAULTS = {
-  colors: 4, circles: true, square: false,
+  colors: 4, circles: true, square: false, upsample: 0, threshold_value: 200,
   mode: 'outline', min_length_mm: 6, border_margin_mm: 3, simplify_mm: 0.05,
   smooth_mm: 0.6, threshold: 'otsu', flatten_mm: 3, close_gaps_mm: 0,
   min_area_mm2: 0.3, prune_spur_mm: 1.5,
@@ -74,29 +74,77 @@ function toast(msg, isError) {
 
 /* ---------- undo ---------- */
 
-function snapshot() {
-  S.undo.push(JSON.stringify(S.paths));
+/* Undo entries hold the paths and the page size together: a rescale changes
+ * both, and restoring one without the other would misalign the image. */
+const stateNow = () => JSON.stringify({ paths: S.paths, page: S.page });
+
+function restore(entry) {
+  const st = JSON.parse(entry);
+  S.paths = st.paths;
+  S.page = st.page;
+  S.sel.clear(); S.selVert = null;
+  syncFitField();
+  render();
+}
+
+function pushUndo() {
+  S.undo.push(stateNow());
   if (S.undo.length > 60) S.undo.shift();
   S.redo.length = 0;
+}
+
+function snapshot() {
+  pushUndo();
   S.dirty = true;
   $('editWarn').hidden = false;
 }
 
 function undo() {
   if (!S.undo.length) return;
-  S.redo.push(JSON.stringify(S.paths));
-  S.paths = JSON.parse(S.undo.pop());
-  S.sel.clear(); S.selVert = null;
-  render();
+  S.redo.push(stateNow());
+  restore(S.undo.pop());
 }
 
 function redo() {
   if (!S.redo.length) return;
-  S.undo.push(JSON.stringify(S.paths));
-  S.paths = JSON.parse(S.redo.pop());
-  S.sel.clear(); S.selVert = null;
-  render();
+  S.undo.push(stateNow());
+  restore(S.redo.pop());
 }
+
+/* ---------- scale ----------
+ * One control: "Largest dimension". Typing a size rescales what's on screen
+ * right away (undoable, edits kept) and is sent as fit_mm on the next detect
+ * so a re-detect comes back at the same size. Leaving it empty means "take
+ * the scale from the scan's DPI". */
+
+function maxExtent() {
+  const ext = extents();
+  return ext ? Math.max(ext.hi[0] - ext.lo[0], ext.hi[1] - ext.lo[1]) : 0;
+}
+
+function syncFitField() {
+  // After undo/redo the field shows the size actually on screen.
+  if ($('fit_mm').value.trim() && S.paths.length) $('fit_mm').value = maxExtent().toFixed(2);
+}
+
+function applyFit() {
+  const target = parseFloat($('fit_mm').value);
+  const current = maxExtent();
+  if (!S.page || !current || !(target > 0) || Math.abs(target - current) < 1e-6) return;
+  const k = target / current;
+  snapshot();
+  for (const p of S.paths) p.points = p.points.map(([x, y]) => [x * k, y * k]);
+  S.page = { ...S.page, width_mm: S.page.width_mm * k, height_mm: S.page.height_mm * k };
+  S.rejects = S.rejects.map((r) => ({
+    ...r, x_mm: r.x_mm * k, y_mm: r.y_mm * k, w_mm: r.w_mm * k, h_mm: r.h_mm * k }));
+  render();
+  zoomFit();
+  toast(`Scaled to ${target.toFixed(2)} mm`);
+}
+
+/* Points as the user means them: a circle is one entity, not 360 samples. */
+const pointCount = (paths) =>
+  paths.reduce((n, p) => n + (p.kind === 'circle' ? 1 : p.points.length), 0);
 
 /* ---------- upload / convert ---------- */
 
@@ -104,7 +152,7 @@ async function upload(file) {
   const fd = new FormData();
   fd.append('file', file);
   const res = await fetch('/api/upload', { method: 'POST', body: fd });
-  if (!res.ok) throw new Error((await res.json()).detail || 'upload failed');
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'upload failed');
   const data = await res.json();
   S.id = data.id;
   S.inks = []; S.hiddenLayers.clear(); S.pixels = null; S.report = null;
@@ -113,6 +161,9 @@ async function upload(file) {
   syncLabels();
   renderInks();
   $('fileName').textContent = data.name;
+  // The export is named after the file unless the user changes it.
+  $('expName').value = (data.name || 'profile').replace(/\.[^.]+$/, '')
+    .replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'profile';
   $('editor').hidden = false;
   $('drop').style.display = 'none';
   return data;
@@ -140,6 +191,7 @@ function readSettings() {
  * re-detect that made things worse is one Ctrl+Z away. */
 async function detect(mode = 'new') {
   $('status').textContent = 'Detecting…';
+  $('busy').hidden = false;
   clearError('detectErr');
   try {
     const res = await fetch(`/api/convert/${S.id}`, {
@@ -156,12 +208,11 @@ async function detect(mode = 'new') {
     const data = await res.json();
 
     if (mode === 'redetect' && S.paths.length) {
-      S.undo.push(JSON.stringify(S.paths));
-      if (S.undo.length > 60) S.undo.shift();
+      pushUndo();
     } else {
       S.undo.length = 0;
+      S.redo.length = 0;
     }
-    S.redo.length = 0;
     S.page = data.page;
     S.paths = data.paths.map((p) => ({
       points: p.points, closed: p.closed, layer: p.layer, color: p.color, kind: p.kind,
@@ -175,8 +226,7 @@ async function detect(mode = 'new') {
     render();
     zoomFit();
     renderInks();
-    $('status').textContent =
-      `${data.report.paths} paths · ${data.report.vertices} points`;
+    $('status').textContent = `${S.paths.length} paths · ${pointCount(S.paths)} points`;
   } catch (err) {
     $('status').textContent = 'Detection failed';
     if (err.status === 404 && S.paths.length) {
@@ -185,6 +235,8 @@ async function detect(mode = 'new') {
     } else {
       showError('detectErr', err.message);
     }
+  } finally {
+    $('busy').hidden = true;
   }
 }
 
@@ -204,6 +256,7 @@ function layers() {
 
 function renderLayers() {
   const ls = layers();
+  $('expLayerRow').hidden = ls.length > 1;   // naming applies to single-layer exports
   $('layersSection').hidden = ls.length < 2;
   const list = $('layerList');
   list.innerHTML = '';
@@ -424,7 +477,7 @@ function renderStats() {
   const size = ext
     ? `${(ext.hi[0] - ext.lo[0]).toFixed(2)} × ${(ext.hi[1] - ext.lo[1]).toFixed(2)} mm`
     : '—';
-  const verts = S.paths.reduce((n, p) => n + p.points.length, 0);
+  const verts = pointCount(S.paths);
 
   if (r.source === 'photo') {
     $('stats').innerHTML = `
@@ -458,6 +511,13 @@ function renderPathList() {
     .filter((row) => visible(row.p))
     .sort((a, b) => a.len - b.len);
 
+  if (!rows.length) {
+    const photo = S.report && S.report.source === 'photo';
+    list.innerHTML = `<div class="empty">${
+      S.paths.length ? 'Every layer is hidden — tick one under Layers.'
+        : photo ? 'Nothing detected. Pick an ink colour on the image, or raise Colours.'
+          : 'Nothing detected. Try lowering Min length or Border margin.'}</div>`;
+  }
   for (const row of rows) {
     const div = document.createElement('div');
     div.className = 'path-row' + (S.sel.has(row.i) ? ' sel' : '');
@@ -536,7 +596,7 @@ function setupCanvas() {
     if (!S.page) return;
     if (S.picking) {
       const [lx, ly] = screenToLocal(e);
-      pickAt(lx, ly).catch((err) => toast(err.message, true));
+      pickAt(lx, ly).catch((err) => showError('detectErr', err.message));
       return;
     }
     svg.setPointerCapture(e.pointerId);
@@ -689,6 +749,9 @@ async function exportDxf() {
     showError('exportErr', 'Nothing to export — every path is hidden or deleted.');
     return;
   }
+  // One layer (a pen scan): it takes the name from the Layer box.
+  const single = layers().length === 1;
+  const send = single ? out.map((p) => ({ ...p, layer: $('expLayer').value.trim() || 'PROFILE' })) : out;
   $('export').disabled = true;
   try {
     // Stateless: needs only the paths, so it works even if the server has
@@ -697,10 +760,10 @@ async function exportDxf() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        paths: out,
+        paths: send,
         origin: $('expOrigin').value,
         entity: $('expEntity').value,
-        scale: parseFloat($('expScale').value) || 1,
+        scale: 1,
         filename: $('expName').value || 'profile',
       }),
     });
@@ -734,6 +797,8 @@ function syncLabels() {
     const unit = key === 'min_area_mm2' ? ' mm²' : ' mm';
     $(pairs[key]).textContent = parseFloat($(key).value).toFixed(2) + unit;
   }
+  $('thresholdValueVal').textContent = $('threshold_value').value;
+  $('thresholdValueRow').hidden = $('threshold').value !== 'fixed';
   $('modeHint').textContent = MODE_HINT[$('mode').value];
   $('colorsVal').textContent = $('colors').value;
   const photo = $('source').value === 'photo';
@@ -754,15 +819,17 @@ function init() {
   for (const key of [...SETTINGS, ...PHOTO_SETTINGS, 'source']) {
     $(key).addEventListener('input', syncLabels);
   }
+  $('fit_mm').addEventListener('change', applyFit);
   $('pickInk').addEventListener('click', () => setPicking(!S.picking));
 
   const drop = $('drop');
   const handle = async (file) => {
     if (!file) return;
+    clearError('dropErr');
     try {
       await upload(file);
       await detect();
-    } catch (err) { toast(err.message, true); }
+    } catch (err) { showError('dropErr', err.message); }
   };
 
   ['dragenter', 'dragover'].forEach((ev) =>

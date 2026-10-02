@@ -84,7 +84,8 @@ and held up.
 
 Any remaining error comes from the tracing, not the conversion — how squarely the pen was held
 against the edge. Measure the real part, divide by the reported size, and pass the ratio to
-`--scale` (or the scale box in the web UI).
+`--scale` — or, in the web UI, type the measured size into *Largest dimension*: it rescales
+what's on screen without re-detecting, so hand edits are kept (and it's undoable).
 
 ## Options
 
