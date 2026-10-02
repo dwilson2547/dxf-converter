@@ -236,12 +236,17 @@ button.danger.solid { background: #a33; border-color: #a33; color: #fff; }
 /* saved scans */
 .toolbar button.small { width: auto; margin: 0; }
 button.attention { box-shadow: 0 0 0 2px #e0a33e; }
-.version-list { display: flex; flex-direction: column; gap: 2px; }
-.version-row { display: flex; gap: 8px; align-items: baseline; padding: 4px 6px; border-radius: 5px;
-  font-size: 13px; }
-.version-row.current { background: #22324a; }
+.version-list { display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow-y: auto; }
+.version-row { padding: 6px 8px; border-radius: 6px; border: 1px solid transparent; font-size: 13px; }
+.version-row.current { background: #1f2c40; border-color: #2c4566; }
+.vline { display: flex; gap: 8px; align-items: baseline; }
 .vnum { font-weight: 650; min-width: 2.2em; }
-.vlabel { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vlabel { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vmeta, .vnote { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.vnote { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-style: italic; }
+.vactions { display: flex; gap: 5px; margin-top: 5px; }
+.vactions button { width: auto; margin: 0; padding: 2px 8px; font-size: 11.5px; }
+.tag { font-size: 10.5px; padding: 0 5px; border-radius: 6px; background: #2b3340; color: var(--muted); }
 
 /* library */
 .library { max-width: 1100px; margin: 0 auto; padding: 0 1.5rem 3rem; }

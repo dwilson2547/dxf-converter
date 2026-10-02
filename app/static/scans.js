@@ -91,9 +91,135 @@ async function saveNewScan() {
   toast(`Saved “${saved.scan.name}” as v${saved.version.number}`);
 }
 
-/* Filled in by workflow 6. */
+/* ---------- versions ---------- */
+
+function versionFields(v = {}) {
+  const body = document.createElement('div');
+  body.innerHTML = `
+    <label>Label <span class="muted">(optional)</span>
+      <input name="label" maxlength="200" placeholder="e.g. squared lettering, star ink picked"></label>
+    <label>Note <span class="muted">(optional)</span>
+      <textarea name="note" rows="3" maxlength="5000"></textarea></label>`;
+  body.querySelector('[name=label]').value = v.label || '';
+  body.querySelector('[name=note]').value = v.note || '';
+  return body;
+}
+
 async function saveVersion() {
-  toast('Saving new versions comes in a later step.');
+  const parent = S.scan.current;
+  const body = versionFields();
+  if (parent) {
+    const hint = document.createElement('p');
+    hint.className = 'hint';
+    hint.textContent = `Saves as v${Math.max(...S.scan.versions.map((v) => v.number)) + 1}, `
+      + `edited from v${parent}. Earlier versions stay as they are.`;
+    body.prepend(hint);
+  }
+  let saved = null;
+  await openDialog({
+    title: `Save a new version of “${S.scan.name}”`,
+    body,
+    actions: [
+      { label: 'Cancel', kind: 'ghost', value: null },
+      { label: 'Save version', kind: 'primary', value: 'ok', submit: true },
+    ],
+    onSubmit: async (form) => {
+      saved = await api(`/api/scans/${S.scan.id}/versions`, {
+        method: 'POST', auth: true,
+        json: {
+          label: form.querySelector('[name=label]').value.trim() || null,
+          note: form.querySelector('[name=note]').value.trim() || null,
+          parent_number: parent || null,
+          settings: readSettings(), paths: S.paths, view: viewState(),
+        },
+      });
+      return true;
+    },
+  });
+  if (!saved) return;
+  S.scan.versions.push(saved);
+  S.scan.current = saved.number;
+  S.dirty = false;
+  $('editWarn').hidden = true;
+  libraryStale = true;
+  setSaveState();
+  renderVersions();
+  toast(`Saved v${saved.number}`);
+}
+
+async function loadVersion(number) {
+  if (number === S.scan.current && !S.dirty) return;
+  if (S.dirty && !(await confirmDialog({
+    title: `Load v${number}?`,
+    body: 'Your unsaved changes will be lost. Save a version first if you want to keep them.',
+    confirmLabel: `Load v${number}`, danger: true,
+  }))) return;
+  clearError('versionsErr');
+  $('busy').hidden = false;
+  try {
+    const v = await api(`/api/scans/${S.scan.id}/versions/${number}`, { auth: true });
+    loadVersionIntoEditor(v);
+    if (!S.page) await recoverPage();
+    S.scan.current = number;
+    render();
+    setSaveState();
+    renderVersions();
+    $('status').textContent = `${S.scan.name} · v${number} · ${S.paths.length} paths · ${pointCount(S.paths)} points`;
+    toast(`Loaded v${number}`);
+  } catch (err) {
+    showError('versionsErr', `Couldn't load v${number}: ${err.message}`);
+  } finally {
+    $('busy').hidden = true;
+  }
+}
+
+async function editVersion(v) {
+  let updated = null;
+  await openDialog({
+    title: `v${v.number}: label and note`,
+    body: versionFields(v),
+    actions: [
+      { label: 'Cancel', kind: 'ghost', value: null },
+      { label: 'Save', kind: 'primary', value: 'ok', submit: true },
+    ],
+    onSubmit: async (form) => {
+      updated = await api(`/api/scans/${S.scan.id}/versions/${v.number}`, {
+        method: 'PATCH', auth: true,
+        json: { label: form.querySelector('[name=label]').value.trim() || null,
+                note: form.querySelector('[name=note]').value.trim() || null },
+      });
+      return true;
+    },
+  });
+  if (!updated) return;
+  Object.assign(v, { label: updated.label, note: updated.note });
+  libraryStale = true;
+  renderVersions();
+  toast(`Updated v${v.number}`);
+}
+
+async function deleteVersion(v) {
+  const isCurrent = v.number === S.scan.current;
+  const ok = await confirmDialog({
+    title: `Delete v${v.number}${v.label ? ` (${v.label})` : ''}?`,
+    body: `It can't be undone.${isCurrent ? ' This is the version in the editor: what you see '
+      + 'stays, but it will be unsaved until you save a version.' : ''}`,
+    confirmLabel: `Delete v${v.number}`, danger: true,
+  });
+  if (!ok) return;
+  clearError('versionsErr');
+  try {
+    await api(`/api/scans/${S.scan.id}/versions/${v.number}`, { method: 'DELETE', auth: true });
+  } catch (err) {
+    showError('versionsErr', `Couldn't delete v${v.number}: ${err.message}`);
+    return;
+  }
+  S.scan.versions = S.scan.versions.filter((x) => x.number !== v.number);
+  if (isCurrent) { S.scan.current = null; S.dirty = true; }
+  libraryStale = true;
+  setSaveState();
+  renderVersions();
+  toast(`Deleted v${v.number}`);
 }
 
 function renderVersions() {
@@ -101,11 +227,34 @@ function renderVersions() {
   if (!sec) return;
   sec.hidden = !S.scan;
   if (!S.scan) return;
-  $('versionList').innerHTML = S.scan.versions.map((v) => `
-    <div class="version-row${v.number === S.scan.current ? ' current' : ''}">
-      <span class="vnum">v${v.number}</span>
-      <span class="vlabel">${escapeHtml(v.label || '')}</span>
-    </div>`).join('');
+  const only = S.scan.versions.length === 1;
+  const list = $('versionList');
+  list.innerHTML = '';
+  const rows = [...S.scan.versions].sort((a, b) => b.number - a.number);
+  for (const v of rows) {
+    const st = v.stats || {};
+    const row = document.createElement('div');
+    row.className = 'version-row' + (v.number === S.scan.current ? ' current' : '');
+    row.innerHTML = `
+      <div class="vline">
+        <span class="vnum">v${v.number}</span>
+        <span class="vlabel" title="${escapeHtml(v.label || '')}">${escapeHtml(v.label || '—')}</span>
+        ${v.number === S.scan.current ? `<span class="tag">${S.dirty ? 'edited' : 'open'}</span>` : ''}
+      </div>
+      <div class="vmeta">${st.paths ?? '?'} paths · ${st.circles ?? 0} circles · ${ago(v.created_at)}${
+        v.parent_number ? ` · from v${v.parent_number}` : ''}</div>
+      ${v.note ? `<div class="vnote" title="${escapeHtml(v.note)}">${escapeHtml(v.note)}</div>` : ''}
+      <div class="vactions">
+        ${v.number === S.scan.current && !S.dirty ? '' : '<button class="ghost small" data-act="load">Load</button>'}
+        <button class="ghost small" data-act="edit">Label</button>
+        <button class="danger small" data-act="delete" ${only ? 'disabled title="The only version — delete the scan from Home instead"' : ''}>Delete</button>
+      </div>`;
+    const on = (act, fn) => { const b = row.querySelector(`[data-act=${act}]`); if (b) b.onclick = fn; };
+    on('load', () => loadVersion(v.number));
+    on('edit', () => editVersion(v));
+    on('delete', () => deleteVersion(v));
+    list.appendChild(row);
+  }
 }
 
 /* ---------- library (Home) ---------- */
@@ -347,7 +496,7 @@ async function recoverPage() {
   });
   try { $('libSort').value = localStorage.getItem('dxfconv.libSort') || 'updated'; } catch (_) { /* ok */ }
   // Edits mark a saved scan as having unsaved changes.
-  document.addEventListener('edited', setSaveState);
+  document.addEventListener('edited', () => { setSaveState(); renderVersions(); });
   document.addEventListener('scan-changed', () => { renderVersions(); setSaveState(); });
   setSaveState();
 })();
