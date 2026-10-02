@@ -60,18 +60,6 @@ function screenToLocal(evt) {
   return [p.x, p.y];
 }
 
-/* ---------- toast ---------- */
-
-let toastTimer = null;
-function toast(msg, isError) {
-  const el = $('toast');
-  el.textContent = msg;
-  el.className = 'toast' + (isError ? ' err' : '');
-  el.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, isError ? 6000 : 2800);
-}
-
 /* ---------- undo ---------- */
 
 /* Undo entries hold the paths and the page size together: a rescale changes
@@ -164,8 +152,7 @@ async function upload(file) {
   // The export is named after the file unless the user changes it.
   $('expName').value = (data.name || 'profile').replace(/\.[^.]+$/, '')
     .replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'profile';
-  $('editor').hidden = false;
-  $('drop').style.display = 'none';
+  showView('editor');
   return data;
 }
 
@@ -809,6 +796,16 @@ function syncLabels() {
     : 'Optional — overrides the scan DPI.';
 }
 
+/* Going Home from the editor. Unsaved hand edits are lost, so ask. */
+async function leaveEditor() {
+  if (S.dirty && !(await confirmDialog({
+    title: 'Leave this file?', body: 'Your hand edits on this file will be lost.',
+    confirmLabel: 'Discard edits', danger: true }))) return false;
+  S.id = null; S.paths = []; S.page = null; S.dirty = false;
+  $('file').value = '';
+  return true;
+}
+
 function init() {
   for (const key in DEFAULTS) {
     if (PHOTO_FLAGS.includes(key)) $(key).checked = DEFAULTS[key];
@@ -845,14 +842,11 @@ function init() {
   $('zoomFit').addEventListener('click', zoomFit);
   $('undo').addEventListener('click', undo);
   $('redo').addEventListener('click', redo);
-  $('newFile').addEventListener('click', async () => {
-    if (S.dirty && !(await confirmDialog({
-      title: 'Start over?', body: 'Your hand edits on this file will be lost.',
-      confirmLabel: 'Discard edits', danger: true }))) return;
-    S.id = null; S.paths = []; S.page = null;
-    $('editor').hidden = true;
-    $('drop').style.display = '';
-    $('file').value = '';
+  $('brand').addEventListener('click', async (e) => {
+    e.preventDefault();
+    if (currentView === 'home') return;
+    if (currentView === 'editor' && !(await leaveEditor())) return;
+    showView('home');
   });
 
   for (const id of ['showScan', 'showRejects', 'showVerts']) {
@@ -873,6 +867,7 @@ function init() {
   });
 
   window.addEventListener('resize', () => { if (S.page) render(); });
+  initAuth();
   fetch('/api/version').then((r) => r.json())
     .then((v) => { $('version').textContent = `v${v.version}`; }).catch(() => {});
   setupCanvas();

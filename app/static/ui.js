@@ -5,6 +5,17 @@
 
 const $ = (id) => document.getElementById(id);
 
+/* Success notices only; errors go inline (showError). */
+let toastTimer = null;
+function toast(msg, isError) {
+  const el = $('toast');
+  el.textContent = msg;
+  el.className = 'toast' + (isError ? ' err' : '');
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.hidden = true; }, isError ? 6000 : 2800);
+}
+
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

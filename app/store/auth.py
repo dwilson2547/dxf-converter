@@ -58,11 +58,11 @@ def generate_password() -> str:
 def create_user(s: Session, username: str, password: str, is_admin: bool = False) -> User:
     username = normalize(username)
     if not USERNAME_RE.match(username):
-        raise AuthError("username: 1-64 of letters, digits, _ . -")
+        raise AuthError("Usernames are 1-64 letters, digits, _ . or -.")
     if len(password or "") < MIN_PASSWORD:
-        raise AuthError(f"password must be at least {MIN_PASSWORD} characters")
+        raise AuthError(f"Passwords must be at least {MIN_PASSWORD} characters.")
     if s.scalar(select(User).where(User.username == username)):
-        raise AuthError(f"user {username!r} already exists")
+        raise AuthError(f"The username {username!r} already exists.")
     user = User(username=username, password_hash=_hasher.hash(password), is_admin=is_admin)
     s.add(user)
     s.flush()
@@ -72,9 +72,9 @@ def create_user(s: Session, username: str, password: str, is_admin: bool = False
 def set_password(s: Session, username: str, password: str) -> None:
     user = s.scalar(select(User).where(User.username == normalize(username)))
     if not user:
-        raise AuthError(f"no user {username!r}")
+        raise AuthError(f"There is no user {username!r}.")
     if len(password or "") < MIN_PASSWORD:
-        raise AuthError(f"password must be at least {MIN_PASSWORD} characters")
+        raise AuthError(f"Passwords must be at least {MIN_PASSWORD} characters.")
     user.password_hash = _hasher.hash(password)
     # A password change signs out every existing token.
     s.execute(delete(AuthToken).where(AuthToken.user_id == user.id))
@@ -85,9 +85,9 @@ def authenticate(s: Session, username: str, password: str) -> User:
     try:
         _hasher.verify(user.password_hash if user else _DUMMY_HASH, password or "")
     except (VerificationError, InvalidHashError):
-        raise AuthError("wrong username or password") from None
+        raise AuthError("Wrong username or password.") from None
     if not user:
-        raise AuthError("wrong username or password")
+        raise AuthError("Wrong username or password.")
     if _hasher.check_needs_rehash(user.password_hash):
         user.password_hash = _hasher.hash(password)
     return user

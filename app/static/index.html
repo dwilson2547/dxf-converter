@@ -9,6 +9,13 @@
 </head>
 <body>
 
+<header class="topbar">
+  <a href="#" id="brand" class="brand" title="Home">Scan &rarr; DXF</a>
+  <span class="spacer"></span>
+  <div id="account" class="account"></div>
+</header>
+
+<div id="home" class="home">
 <div id="drop" class="drop">
   <div class="drop-inner">
     <h1>Scan &rarr; DXF</h1>
@@ -22,6 +29,7 @@
     <p class="hint muted" id="version"></p>
   </div>
 </div>
+</div>
 
 <main id="editor" hidden>
   <div class="stage">
@@ -34,7 +42,6 @@
       <button id="zoomFit" class="ghost">Fit</button>
       <button id="undo" class="ghost" title="Ctrl+Z">Undo</button>
       <button id="redo" class="ghost" title="Ctrl+Shift+Z">Redo</button>
-      <button id="newFile" class="ghost">New scan</button>
     </div>
     <svg id="svg"></svg>
     <div class="busy" id="busy" hidden><span class="spinner"></span>Detecting…</div>
@@ -185,8 +192,11 @@
   </aside>
 </main>
 
+<section id="admin" class="admin" hidden></section>
+
 <div id="toast" class="toast" hidden></div>
 <script src="ui.js"></script>
+<script src="api.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -61,7 +61,7 @@ def current_store() -> Store | None:
 def get_store() -> Store:
     store = current_store()
     if store is None:
-        raise HTTPException(503, "accounts are not configured on this server")
+        raise HTTPException(503, "Accounts aren't set up on this server.")
     return store
 
 
@@ -72,7 +72,7 @@ def _bearer(authorization: str | None) -> str | None:
     return token.strip() if scheme.lower() == "bearer" and token.strip() else None
 
 
-def _unauthorized(msg: str = "log in first"):
+def _unauthorized(msg: str = "Log in first."):
     return HTTPException(401, msg, headers={"WWW-Authenticate": "Bearer"})
 
 
@@ -88,13 +88,13 @@ def current_user(authorization: str | None = Header(None),
     # Raised after the session commits: raising inside it would roll back
     # the expired token's deletion (and a sliding-expiry bump).
     if user is None:
-        raise _unauthorized("session expired — log in again")
+        raise _unauthorized("Session expired — log in again.")
     return user
 
 
 def require_admin(user: User = Depends(current_user)) -> User:
     if not user.is_admin:
-        raise HTTPException(403, "admins only")
+        raise HTTPException(403, "Admins only.")
     return user
 
 
@@ -143,10 +143,10 @@ def status():
 def signup(req: LoginRequest, request: Request, store: Store = Depends(get_store)):
     """Create an ordinary (non-admin) account and log straight in."""
     if not store.cfg.allow_signup:
-        raise HTTPException(403, "sign-up is turned off — ask an admin for an account")
+        raise HTTPException(403, "Sign-up is turned off — ask an admin for an account.")
     ip = request.client.host if request.client else "?"
     if _throttled(ip, _signups, SIGNUP_WINDOW_S, SIGNUP_LIMIT):
-        raise HTTPException(429, "too many sign-ups from here — try again later")
+        raise HTTPException(429, "Too many sign-ups from here — try again later.")
     with store.db.session() as s:
         try:
             user = auth.create_user(s, req.username, req.password)
@@ -165,7 +165,7 @@ def signup(req: LoginRequest, request: Request, store: Store = Depends(get_store
 def login(req: LoginRequest, request: Request, store: Store = Depends(get_store)):
     key = (request.client.host if request.client else "?", auth.normalize(req.username))
     if _throttled(key):
-        raise HTTPException(429, "too many failed logins — wait a few minutes")
+        raise HTTPException(429, "Too many failed logins — wait a few minutes and try again.")
     with store.db.session() as s:
         try:
             user = auth.authenticate(s, req.username, req.password)

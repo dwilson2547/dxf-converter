@@ -10,9 +10,12 @@
 }
 
 * { box-sizing: border-box; }
+/* Author display rules (flex, grid) beat the UA's [hidden]; this keeps hidden hidden. */
+[hidden] { display: none !important; }
 
 html, body {
   margin: 0; height: 100%;
+  display: flex; flex-direction: column;
   background: var(--bg); color: var(--fg);
   font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
@@ -21,10 +24,32 @@ html, body {
 .spacer { flex: 1; }
 .muted { color: var(--muted); font-weight: 400; }
 
+/* --- top bar + views --- */
+html { display: block; }
+.topbar { display: flex; align-items: center; gap: .6rem; padding: .45rem .9rem;
+  background: #10141a; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+.brand { color: var(--fg); font-weight: 650; text-decoration: none; letter-spacing: .01em; }
+.brand:hover { color: var(--accent); }
+.account { display: flex; align-items: center; gap: .4rem; position: relative; }
+.account button { width: auto; margin: 0; }
+.badge { font-size: 10.5px; padding: 0 5px; border-radius: 8px; background: #2a3d57; color: #9ccaff; }
+.menu { position: absolute; right: 0; top: calc(100% + 6px); min-width: 160px; z-index: 40;
+  background: #1a1e25; border: 1px solid var(--line); border-radius: 8px; padding: 4px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.45); }
+.menu[hidden] { display: none; }
+.menu button { display: block; width: 100%; margin: 0; text-align: left; background: none;
+  border: none; padding: .45rem .6rem; border-radius: 5px; }
+.menu button:hover { background: #262c36; }
+.home { flex: 1; overflow-y: auto; min-height: 0; }
+.home[hidden], .admin[hidden] { display: none; }
+.admin { flex: 1; overflow-y: auto; min-height: 0; }
+.modal .switch { font-size: 12.5px; color: var(--muted); margin-top: 12px; }
+.modal .switch a { color: var(--accent); }
+
 /* --- drop zone --- */
 .drop {
-  position: fixed; inset: 0; display: grid; place-items: center;
-  text-align: center; padding: 2rem;
+  display: grid; place-items: center;
+  text-align: center; padding: 3rem 2rem 2rem;
 }
 .drop-inner {
   border: 2px dashed var(--line); border-radius: 14px;
@@ -42,7 +67,7 @@ html, body {
 /* A bare `main { display:flex }` outranks the UA's [hidden] rule, so the
    editor would stay laid out underneath the drop zone. */
 main[hidden] { display: none; }
-main { display: flex; height: 100%; }
+main { display: flex; flex: 1; min-height: 0; }
 .stage { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
 .toolbar, .statusbar {
