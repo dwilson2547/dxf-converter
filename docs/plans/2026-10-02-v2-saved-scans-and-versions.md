@@ -145,7 +145,12 @@ Each phase ends tested and committed; release once at the end as **2.0.0**.
    concurrent version saves, cache loss, tampered and missing objects. End-to-end over HTTP in
    the built image with Postgres + an S3 server on the Seeburg photo.
 3. **UI: login + sign-up, admin panel, library, save/load, version strip.** Driven end-to-end in
-   a browser with Playwright.
+   a browser with Playwright. Scope widened by `docs/workflow-analysis-2026-10-02.md`: stateless
+   export (`POST /api/export`) so a restart can't trap work; confirm + undo on Re-detect; inline
+   errors; one scale control; 401 mid-edit re-prompts login and retries without touching the
+   editor; save-while-anonymous keeps the editor state; library search/sort; compare warns when
+   versions were scaled differently; self-service password change and account deletion; admin
+   password reset and promote/demote (API + UI).
 4. **UI: compare overlay + stats diff.**
 5. **Deploy.** Create the bucket and a service account limited to it, create the database and
    role, apply the Kubernetes Secret (DB URL, S3 endpoint and keys, session secret — template in
