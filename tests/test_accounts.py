@@ -25,9 +25,9 @@ def client(store):
     return TestClient(app)
 
 
-def add_user(store, name="dan", pw="correct horse"):
+def add_user(store, name="dan", pw="correct horse", is_admin=False):
     with store.db.session() as s:
-        auth.create_user(s, name, pw)
+        return auth.create_user(s, name, pw, is_admin=is_admin).id
 
 
 def login(client, name="dan", pw="correct horse"):
@@ -45,13 +45,15 @@ def bearer(token):
 def test_without_a_database_accounts_are_off_and_anonymous_use_works():
     accounts.configure(StoreConfig.from_env({}))
     c = TestClient(app)
-    assert c.get("/api/auth/status").json() == {"accounts": False, "storage": False}
+    assert c.get("/api/auth/status").json() == {"accounts": False, "storage": False,
+                                                 "signup": False}
     assert c.post("/api/auth/login", json={"username": "a", "password": "b"}).status_code == 503
     assert c.get("/api/version").status_code == 200
 
 
 def test_status_reports_accounts_and_storage(client):
-    assert client.get("/api/auth/status").json() == {"accounts": True, "storage": True}
+    assert client.get("/api/auth/status").json() == {"accounts": True, "storage": True,
+                                                      "signup": True}
 
 
 # --- users --------------------------------------------------------------------
@@ -299,3 +301,176 @@ def test_real_bucket_round_trip_under_a_scratch_prefix():
         assert objs.get("users/u/scans/s/original.png") == b"probe"
     finally:
         assert objs.delete_prefix("") >= 1
+
+
+# --- usernames ----------------------------------------------------------------
+
+def test_usernames_are_case_insensitive(client, store):
+    add_user(store, "Dan")
+    login(client, "DAN")
+    with pytest.raises(auth.AuthError, match="exists"):
+        add_user(store, "dan")
+
+
+# --- sign-up ------------------------------------------------------------------
+
+def test_signup_creates_a_plain_user_and_logs_in(client, store):
+    res = client.post("/api/auth/signup", json={"username": "newbie", "password": "long enough"})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["user"] == {"username": "newbie", "is_admin": False}
+    me = client.get("/api/auth/me", headers=bearer(body["token"])).json()
+    assert me["username"] == "newbie" and me["is_admin"] is False
+
+
+def test_signup_rejects_duplicates_and_bad_input(client, store):
+    add_user(store)
+    assert client.post("/api/auth/signup",
+                       json={"username": "DAN", "password": "long enough"}).status_code == 409
+    assert client.post("/api/auth/signup",
+                       json={"username": "ok", "password": "short"}).status_code == 422
+
+
+def test_signup_can_be_turned_off(store_cfg):
+    from dataclasses import replace
+    accounts.configure(replace(store_cfg, allow_signup=False))
+    try:
+        c = TestClient(app)
+        assert c.get("/api/auth/status").json()["signup"] is False
+        res = c.post("/api/auth/signup", json={"username": "x", "password": "long enough"})
+        assert res.status_code == 403
+    finally:
+        accounts.configure(StoreConfig.from_env({}))
+
+
+def test_allow_signup_env_parsing():
+    assert StoreConfig.from_env({}).allow_signup is True
+    for off in ("false", "0", "no", "OFF"):
+        assert StoreConfig.from_env({"ALLOW_SIGNUP": off}).allow_signup is False
+
+
+def test_signups_are_throttled_per_client(client, store):
+    accounts._signups.clear()
+    for i in range(accounts.SIGNUP_LIMIT):
+        assert client.post("/api/auth/signup",
+                           json={"username": f"u{i}", "password": "long enough"}).status_code == 200
+    res = client.post("/api/auth/signup", json={"username": "one-more", "password": "long enough"})
+    assert res.status_code == 429
+    accounts._signups.clear()
+
+
+# --- admin panel API ----------------------------------------------------------
+
+def _scan_with_image(store, user_id, name="badge"):
+    with store.db.session() as s:
+        scan = Scan(user_id=user_id, name=name, image_key="k", image_sha256="0" * 64,
+                    content_type="image/png", width_px=1, height_px=1)
+        s.add(scan)
+        s.flush()
+        s.add(Version(scan_id=scan.id, number=1, settings={}, paths=[], stats={}))
+        sid = scan.id
+    store.objects.put(ObjectStore.image_key(user_id, sid, ".png"), b"img", "image/png")
+    return sid
+
+
+def test_admin_routes_need_an_admin(client, store):
+    add_user(store)
+    token = login(client)
+    assert client.get("/api/admin/users").status_code == 401
+    assert client.get("/api/admin/users", headers=bearer(token)).status_code == 403
+
+
+def test_admin_lists_users_with_their_content_counts(client, store):
+    add_user(store, "boss", is_admin=True)
+    uid = add_user(store, "dan")
+    _scan_with_image(store, uid)
+    _scan_with_image(store, uid, "second")
+    token = login(client, "boss")
+    users = {u["username"]: u for u in
+             client.get("/api/admin/users", headers=bearer(token)).json()["users"]}
+    assert users["dan"]["scans"] == 2 and users["dan"]["versions"] == 2
+    assert users["boss"]["is_admin"] and users["boss"]["you"]
+    assert users["boss"]["scans"] == 0
+
+
+def test_admin_deletes_a_users_content_but_keeps_the_account(client, store):
+    add_user(store, "boss", is_admin=True)
+    uid = add_user(store, "dan")
+    sid = _scan_with_image(store, uid)
+    other = add_user(store, "eve")
+    keep = _scan_with_image(store, other)
+    token = login(client, "boss")
+    res = client.delete(f"/api/admin/users/{uid}/content", headers=bearer(token))
+    assert res.status_code == 200
+    assert res.json()["deleted"] == {"scans": 1, "versions": 1, "objects": 1}
+    with store.db.session() as s:
+        assert s.get(User, uid) is not None
+        assert s.get(Scan, sid) is None
+        assert s.get(Scan, keep) is not None
+    with pytest.raises(ObjectNotFound):
+        store.objects.get(ObjectStore.image_key(uid, sid, ".png"))
+    assert store.objects.get(ObjectStore.image_key(other, keep, ".png")) == b"img"
+    login(client, "dan")                       # still has an account
+
+
+def test_admin_deletes_a_user_and_everything_they_own(client, store):
+    add_user(store, "boss", is_admin=True)
+    uid = add_user(store, "dan")
+    sid = _scan_with_image(store, uid)
+    dan_token = login(client, "dan")
+    token = login(client, "boss")
+    assert client.delete(f"/api/admin/users/{uid}", headers=bearer(token)).status_code == 200
+    with store.db.session() as s:
+        assert s.get(User, uid) is None and s.get(Scan, sid) is None
+    with pytest.raises(ObjectNotFound):
+        store.objects.get(ObjectStore.image_key(uid, sid, ".png"))
+    assert client.get("/api/auth/me", headers=bearer(dan_token)).status_code == 401
+
+
+def test_admin_cannot_delete_themselves_or_the_last_admin(client, store):
+    boss = add_user(store, "boss", is_admin=True)
+    token = login(client, "boss")
+    assert client.delete(f"/api/admin/users/{boss}", headers=bearer(token)).status_code == 409
+    with store.db.session() as s:
+        from app.store import content
+        with pytest.raises(content.LastAdminError):
+            content.delete_user(s, store.objects, s.get(User, boss))
+
+
+def test_admin_unknown_user_is_404(client, store):
+    add_user(store, "boss", is_admin=True)
+    token = login(client, "boss")
+    assert client.delete("/api/admin/users/nope", headers=bearer(token)).status_code == 404
+    assert client.delete("/api/admin/users/nope/content", headers=bearer(token)).status_code == 404
+
+
+# --- init-admin ---------------------------------------------------------------
+
+def test_init_admin_prints_a_working_generated_password(admin_env, capsys, client):
+    assert admin(["init-admin"]) == 0
+    out = capsys.readouterr().out
+    pw = next(l.split(": ", 1)[1] for l in out.splitlines() if l.startswith("admin password"))
+    assert len(pw) >= 20
+    me = client.get("/api/auth/me", headers=bearer(login(client, "admin", pw))).json()
+    assert me["is_admin"] is True
+
+
+def test_init_admin_refuses_to_run_twice_unless_reset(admin_env, capsys, client):
+    admin(["init-admin"])
+    first = capsys.readouterr().out.splitlines()[1].split(": ", 1)[1]
+    old_token = login(client, "admin", first)
+    with pytest.raises(SystemExit, match="already exists"):
+        admin(["init-admin"])
+    with pytest.raises(SystemExit, match="an admin already exists"):
+        admin(["init-admin", "--username", "root"])
+    assert admin(["init-admin", "--reset"]) == 0
+    second = capsys.readouterr().out.splitlines()[1].split(": ", 1)[1]
+    assert second != first
+    login(client, "admin", second)
+    assert client.get("/api/auth/me", headers=bearer(old_token)).status_code == 401
+
+
+def test_cli_delete_user_refuses_the_last_admin(admin_env):
+    add_user(admin_env, "boss", is_admin=True)
+    with pytest.raises(SystemExit, match="last admin"):
+        admin(["delete-user", "boss"])

@@ -23,6 +23,9 @@ class StoreConfig:
     """Prepended to every object key. Lets tests run against the real bucket
     under a scratch prefix without touching anything else in it."""
     token_ttl_days: int = 30
+    allow_signup: bool = True
+    """Self-service sign-up from the login screen. Turn off with
+    ALLOW_SIGNUP=false to go back to admin-created accounts only."""
 
     @property
     def enabled(self) -> bool:
@@ -44,4 +47,6 @@ class StoreConfig:
             s3_region=env.get("S3_REGION") or "us-east-1",
             s3_prefix=(env.get("S3_PREFIX") or "").strip("/"),
             token_ttl_days=int(env.get("TOKEN_TTL_DAYS") or 30),
+            allow_signup=(env.get("ALLOW_SIGNUP") or "true").strip().lower()
+            not in ("0", "false", "no", "off"),
         )

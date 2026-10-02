@@ -46,21 +46,31 @@ def _aware(dt: datetime) -> datetime:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
-def create_user(s: Session, username: str, password: str) -> User:
-    if not USERNAME_RE.match(username or ""):
+def normalize(username: str) -> str:
+    return (username or "").strip().lower()
+
+
+def generate_password() -> str:
+    """24 URL-safe characters (~144 bits) — for the bootstrap admin."""
+    return secrets.token_urlsafe(18)
+
+
+def create_user(s: Session, username: str, password: str, is_admin: bool = False) -> User:
+    username = normalize(username)
+    if not USERNAME_RE.match(username):
         raise AuthError("username: 1-64 of letters, digits, _ . -")
     if len(password or "") < MIN_PASSWORD:
         raise AuthError(f"password must be at least {MIN_PASSWORD} characters")
     if s.scalar(select(User).where(User.username == username)):
         raise AuthError(f"user {username!r} already exists")
-    user = User(username=username, password_hash=_hasher.hash(password))
+    user = User(username=username, password_hash=_hasher.hash(password), is_admin=is_admin)
     s.add(user)
     s.flush()
     return user
 
 
 def set_password(s: Session, username: str, password: str) -> None:
-    user = s.scalar(select(User).where(User.username == username))
+    user = s.scalar(select(User).where(User.username == normalize(username)))
     if not user:
         raise AuthError(f"no user {username!r}")
     if len(password or "") < MIN_PASSWORD:
@@ -71,7 +81,7 @@ def set_password(s: Session, username: str, password: str) -> None:
 
 
 def authenticate(s: Session, username: str, password: str) -> User:
-    user = s.scalar(select(User).where(User.username == username))
+    user = s.scalar(select(User).where(User.username == normalize(username)))
     try:
         _hasher.verify(user.password_hash if user else _DUMMY_HASH, password or "")
     except (VerificationError, InvalidHashError):

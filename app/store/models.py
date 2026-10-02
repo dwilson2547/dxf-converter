@@ -11,8 +11,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import (JSON, DateTime, ForeignKey, Integer, String, Text,
-                        UniqueConstraint)
+from sqlalchemy import (JSON, Boolean, DateTime, ForeignKey, Integer, String,
+                        Text, UniqueConstraint, false)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -37,7 +37,9 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
     username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    """Stored lower-case: usernames are case-insensitive."""
     password_hash: Mapped[str] = mapped_column(String(255))
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     tokens: Mapped[list["AuthToken"]] = relationship(

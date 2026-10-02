@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dxfconv import Config, __version__                      # noqa: E402
 from dxfconv.pipeline import extract, apply_origin           # noqa: E402
 from dxfconv import dxfout                                   # noqa: E402
-from app import accounts                                     # noqa: E402
+from app import accounts, admin_api                          # noqa: E402
 
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -44,6 +44,7 @@ CONVERT_LOCK = threading.Lock()
 
 app = FastAPI(title="dxf-converter", version=__version__)
 app.include_router(accounts.router)
+app.include_router(admin_api.router)
 
 
 @app.get("/api/version")

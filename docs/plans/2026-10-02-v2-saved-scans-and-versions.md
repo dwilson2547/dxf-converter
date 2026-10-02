@@ -41,7 +41,7 @@ browser ──► dxf-converter API (cluster) ──► Postgres (cluster)   use
 
 | Table | Columns |
 |---|---|
-| `users` | `id`, `username` (unique), `password_hash` (argon2id), `created_at` |
+| `users` | `id`, `username` (unique, lower-case), `password_hash` (argon2id), `is_admin`, `created_at` |
 | `auth_tokens` | `token_hash` (SHA-256 of a random 256-bit token), `user_id`, `created_at`, `expires_at` |
 | `scans` | `id`, `user_id`, `name`, `image_key`, `thumb_key`, `image_sha256`, `width_px`, `height_px`, `content_type`, `created_at`, `updated_at` |
 | `versions` | `id`, `scan_id`, `number` (1, 2, … per scan), `label`, `note`, `settings` jsonb, `paths` jsonb, `stats` jsonb, `parent_number`, `created_at` |
@@ -61,7 +61,8 @@ Object keys in the bucket: `users/<user_id>/scans/<scan_id>/original.<ext>` and
 
 | Method | Path | |
 |---|---|---|
-| GET | `/api/auth/status` | whether accounts/storage are configured (the UI hides login if not) |
+| GET | `/api/auth/status` | whether accounts, storage and sign-up are on (the UI hides what isn't) |
+| POST | `/api/auth/signup` | `{username, password}` → a plain account, logged in; 403 when `ALLOW_SIGNUP=false` |
 | POST | `/api/auth/login` | `{username, password}` → `{token, expires_at, user}` |
 | POST | `/api/auth/logout` | revokes the presented token |
 | GET | `/api/auth/me` | who is logged in, or 401 |
@@ -84,13 +85,30 @@ the header and displays it from a blob URL — the eyedropper reads pixels from 
 Every scan route checks ownership; another user's id is a 404, not a 403. Upload, convert and
 export stay usable without logging in.
 
-**Accounts are created by an admin command, not self-registration**: `python3 -m app.admin
-add-user <name>` run in the pod. It's a home tool behind the LAN, and an open sign-up form is
-attack surface for no benefit.
+**Admin panel API** (admin token required; users addressed by id):
+
+| Method | Path | |
+|---|---|---|
+| GET | `/api/admin/users` | every user with scan and version counts |
+| DELETE | `/api/admin/users/{id}/content` | delete all their scans (images, then rows); the account stays |
+| DELETE | `/api/admin/users/{id}` | delete the account and everything it owns |
+
+An admin can't delete their own account there, and the last admin can't be deleted at all.
+Deletion removes objects before rows, so a failed bucket call leaves nothing half-deleted.
+
+**Accounts** (changed 2026-10-02 on request): **self sign-up is on**, with a "Sign up"
+button next to "Log in"; sign-ups create plain users and are capped at 5 per client per hour.
+`ALLOW_SIGNUP=false` turns it off, back to admin-created accounts only. The first admin is made
+with `python3 -m app.admin init-admin`, which prints a generated 24-character password once —
+run it with `kubectl exec` after the first deploy rather than fishing it out of startup logs.
+`--reset` gives that admin a new generated password. `add-user --admin` makes more admins.
 
 ## UI
 
-- **Header:** "Log in" / user name and "Log out".
+- **Header:** "Log in" and "Sign up" (when sign-up is on) / user name and "Log out"; "Admin" for
+  admins.
+- **Admin panel** (admins): the user list with scan/version counts, and per user "Delete content"
+  and "Delete user", each behind a confirm that names the user and what will go.
 - **Library** (logged in): the user's scans as cards — thumbnail, name, version count, last saved.
   Open one to get its version list.
 - **Editor:** "Save" (first save names the scan; after that it adds a version, with an optional
@@ -109,15 +127,19 @@ Each phase ends tested and committed; release once at the end as **2.0.0**.
    (`add-user`, `set-password`, `list-users`, `delete-user`, `check`). Tests run against a
    throwaway `postgres:17` container and moto's S3 server (MinIO images don't pull, see below);
    an opt-in test hits the real bucket under a random `_tests/` prefix.
+   Follow-up the same day: `is_admin`, `init-admin`, sign-up (+ `ALLOW_SIGNUP`), case-insensitive
+   usernames, admin panel API (`app/admin_api.py`, `app/store/content.py`).
 2. **Scans + versions API.** Save, list, load, stream image/thumb, version CRUD, ownership checks.
    Image cache in the temp dir, re-fetched from AIStor after a pod restart.
-3. **UI: login, library, save/load, version strip.** Driven end-to-end in a browser with Playwright.
+3. **UI: login + sign-up, admin panel, library, save/load, version strip.** Driven end-to-end in
+   a browser with Playwright.
 4. **UI: compare overlay + stats diff.**
 5. **Deploy.** Create the bucket and a service account limited to it, create the database and
    role, apply the Kubernetes Secret (DB URL, S3 endpoint and keys, session secret — template in
    `infra/cluster-config/example-secrets/dxf-converter/`), chart env wiring, release 2.0.0. With
    state out of the pod, the one-replica rule in `values.yaml` no longer applies to saved scans
-   (anonymous uploads still live in a single pod's temp dir).
+   (anonymous uploads still live in a single pod's temp dir). After the rollout, create the admin:
+   `kubectl -n dxf-converter exec deploy/dxf-converter -- python3 -m app.admin init-admin`.
 
 ## Decisions to confirm
 
