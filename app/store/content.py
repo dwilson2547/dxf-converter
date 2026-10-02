@@ -43,7 +43,7 @@ def delete_user(s: Session, objects: ObjectStore | None, user: User) -> dict:
     if user.is_admin:
         admins = s.scalar(select(func.count(User.id)).where(User.is_admin.is_(True)))
         if admins <= 1:
-            raise LastAdminError("can't delete the last admin")
+            raise LastAdminError("That's the last admin, so it can't be deleted.")
     gone = delete_content(s, objects, user)
     s.delete(user)
     return gone

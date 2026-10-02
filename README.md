@@ -24,8 +24,25 @@ Drop a scan in and you get the detected geometry over the faded scan. From there
 - The **Removed** toggle boxes what the filters threw out, so you can see what it discarded
   instead of taking its word for it.
 
-Adjust the detection settings and hit **Re-detect** to run the pipeline again — that discards
-hand edits, and the panel warns you when you have some.
+Adjust the detection settings and hit **Re-detect** to run the pipeline again. With hand edits
+it asks first, and **Undo** brings the previous paths back.
+
+### Accounts and saved scans
+
+When the server has a database and image storage configured (see *Cluster deploy*), the top bar
+offers **Log in** / **Sign up**. Logged in:
+
+- **Save** in the editor stores the image and your current geometry as a scan; **Save version**
+  adds a numbered version (label, note) — nothing is overwritten.
+- **Home** lists your scans with thumbnails, filter and sort; open one to carry on where you left
+  off, rename or delete it.
+- The **Versions** panel loads, labels or deletes versions, and **Compare** overlays another
+  version (dashed, flip with **B**) with a table of what changed.
+- **Account** (your name, top right) changes your password or deletes your account; admins also
+  get **Admin**: users with their saved content, reset password, make/remove admin, delete
+  content or users.
+
+Without a database the tool works exactly as before: upload, edit, download, nothing kept.
 
 ## CLI
 

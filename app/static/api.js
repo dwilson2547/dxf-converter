@@ -213,7 +213,13 @@ function renderAccount() {
   const menu = document.createElement('div');
   menu.className = 'menu'; menu.hidden = true; menu.setAttribute('role', 'menu');
   const items = [['Account', () => accountDialog()]];
-  if (API.user.is_admin) items.push(['Admin', () => showView('admin')]);
+  if (API.user.is_admin) {
+    items.push(['Admin', async () => {
+      // Same guard as the Home link: don't drop unsaved editor work silently.
+      if (currentView === 'editor' && typeof leaveEditor === 'function' && !(await leaveEditor())) return;
+      showView('admin');
+    }]);
+  }
   items.push(['Log out', logout]);
   for (const [label, fn] of items) {
     const it = document.createElement('button');

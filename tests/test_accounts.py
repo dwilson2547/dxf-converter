@@ -525,3 +525,60 @@ def test_the_only_admin_cannot_delete_their_own_account(client, store):
                          json={"password": "correct horse"})
     assert res.status_code == 409
     assert client.get("/api/auth/me", headers=bearer(tok)).status_code == 200
+
+
+# --- admin: reset password, roles ---------------------------------------------
+
+def test_admin_resets_a_password_shown_once_and_signs_the_user_out(client, store):
+    add_user(store, "boss", is_admin=True)
+    uid = add_user(store, "dan")
+    dan_token = login(client, "dan")
+    tok = login(client, "boss")
+    res = client.post(f"/api/admin/users/{uid}/password", headers=bearer(tok))
+    assert res.status_code == 200
+    pw = res.json()["password"]
+    assert len(pw) >= 20
+    assert client.get("/api/auth/me", headers=bearer(dan_token)).status_code == 401
+    login(client, "dan", pw)
+    with store.db.session() as s:
+        assert pw not in s.get(User, uid).password_hash
+
+
+def test_admin_cannot_reset_their_own_password_from_the_panel(client, store):
+    boss = add_user(store, "boss", is_admin=True)
+    tok = login(client, "boss")
+    assert client.post(f"/api/admin/users/{boss}/password", headers=bearer(tok)).status_code == 409
+
+
+def test_admin_promotes_and_demotes(client, store):
+    add_user(store, "boss", is_admin=True)
+    uid = add_user(store, "dan")
+    tok = login(client, "boss")
+    dan_tok = login(client, "dan")
+    assert client.get("/api/admin/users", headers=bearer(dan_tok)).status_code == 403
+    res = client.patch(f"/api/admin/users/{uid}", headers=bearer(tok), json={"is_admin": True})
+    assert res.status_code == 200 and res.json()["is_admin"] is True
+    # the role applies to dan's existing session straight away
+    assert client.get("/api/admin/users", headers=bearer(dan_tok)).status_code == 200
+    assert client.patch(f"/api/admin/users/{uid}", headers=bearer(tok),
+                        json={"is_admin": False}).status_code == 200
+    assert client.get("/api/admin/users", headers=bearer(dan_tok)).status_code == 403
+
+
+def test_role_changes_refuse_yourself_and_the_last_admin(client, store):
+    boss = add_user(store, "boss", is_admin=True)
+    other = add_user(store, "other", is_admin=True)
+    tok = login(client, "boss")
+    assert client.patch(f"/api/admin/users/{boss}", headers=bearer(tok),
+                        json={"is_admin": False}).status_code == 409
+    assert client.patch(f"/api/admin/users/{other}", headers=bearer(tok),
+                        json={"is_admin": False}).status_code == 200
+    # boss is now the only admin; demoting boss is refused (by the self rule
+    # here, and by the last-admin rule for any other admin).
+    with store.db.session() as s:
+        s.get(User, other).is_admin = True
+    otok = login(client, "other")
+    assert client.patch(f"/api/admin/users/{boss}", headers=bearer(otok),
+                        json={"is_admin": False}).status_code == 200
+    assert client.patch(f"/api/admin/users/{other}", headers=bearer(tok),
+                        json={"is_admin": False}).status_code == 403
