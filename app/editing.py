@@ -72,14 +72,14 @@ class ExportRequest(BaseModel):
 def upload_path(upload_id: str) -> str:
     """The local file of an anonymous upload."""
     if not upload_id or not upload_id.isalnum():
-        raise HTTPException(400, "bad id")
+        raise HTTPException(400, "Bad upload id.")
     folder = os.path.join(WORKDIR, upload_id)
     if not os.path.isdir(folder):
-        raise HTTPException(404, "upload not found — re-upload the scan")
+        raise HTTPException(404, "Upload not found — re-upload the file.")
     for name in os.listdir(folder):
         if name.startswith("scan"):
             return os.path.join(folder, name)
-    raise HTTPException(404, "scan missing")
+    raise HTTPException(404, "Upload not found — re-upload the file.")
 
 
 def convert_file(src: str, settings: Settings) -> dict:
@@ -88,7 +88,7 @@ def convert_file(src: str, settings: Settings) -> dict:
         with CONVERT_LOCK:
             paths_mm, _, _, page, report = extract(src, settings.to_config())
     except Exception as exc:                       # noqa: BLE001
-        raise HTTPException(422, f"conversion failed: {exc}") from exc
+        raise HTTPException(422, f"Conversion failed: {exc}") from exc
 
     rejects = [r for r in report["preprocess"].get("rejects", [])]
     px_per_mm = report["preprocess"]["px_per_mm"] / settings.scale
@@ -151,7 +151,7 @@ def write_export(req: ExportRequest, out_dir: str) -> tuple[str, str]:
     keep = [p for p in req.paths if len(p.points) >= 2]
     paths = [(np.asarray(p.points, dtype=float) * req.scale, p.closed) for p in keep]
     if not paths:
-        raise HTTPException(400, "nothing to export")
+        raise HTTPException(400, "Nothing to export.")
     meta = [{"layer": p.layer or req.layer, "color": p.color, "kind": p.kind}
             for p in keep]
 

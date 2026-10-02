@@ -29,6 +29,22 @@
     <p class="hint muted" id="version"></p>
   </div>
 </div>
+
+<section id="library" class="library" hidden>
+  <div class="library-head">
+    <h2>Your scans <span class="muted" id="libCount"></span></h2>
+    <span class="spacer"></span>
+    <input type="search" id="libSearch" placeholder="Filter by name" aria-label="Filter scans by name">
+    <select id="libSort" aria-label="Sort scans">
+      <option value="updated">Last updated</option>
+      <option value="name">Name</option>
+      <option value="created">Created</option>
+    </select>
+  </div>
+  <div class="error-strip" id="libraryErr" hidden></div>
+  <div class="library-grid" id="libraryGrid"></div>
+  <p class="empty" id="libraryEmpty" hidden></p>
+</section>
 </div>
 
 <main id="editor" hidden>

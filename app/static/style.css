@@ -242,3 +242,32 @@ button.attention { box-shadow: 0 0 0 2px #e0a33e; }
 .version-row.current { background: #22324a; }
 .vnum { font-weight: 650; min-width: 2.2em; }
 .vlabel { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* library */
+.library { max-width: 1100px; margin: 0 auto; padding: 0 1.5rem 3rem; }
+.library-head { display: flex; align-items: center; gap: .6rem; margin: .5rem 0 1rem; flex-wrap: wrap; }
+.library-head h2 { margin: 0; font-size: 15px; }
+.library-head input, .library-head select { padding: .4rem .55rem; background: #12151a; color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px; font-size: 13px; }
+.library-head input { width: 220px; }
+.library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+  display: flex; flex-direction: column; }
+.card.skeleton { height: 270px; background: linear-gradient(90deg, #1b1f26 0%, #222833 50%, #1b1f26 100%);
+  background-size: 200% 100%; animation: shimmer 1.2s linear infinite; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+.card .thumb { width: 100%; margin: 0; padding: 0; height: 160px; background: #0f1216; border: none;
+  border-bottom: 1px solid var(--line); border-radius: 0; display: grid; place-items: center; cursor: pointer; }
+.card .thumb { overflow: hidden; flex-shrink: 0; position: relative; }
+.card .thumb img { position: absolute; inset: 6px; width: calc(100% - 12px);
+  height: calc(100% - 12px); object-fit: contain; }
+.card .thumb .ph { width: 40%; height: 40%; border-radius: 8px; background: #1b2028; }
+.card-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 3px; }
+.card-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-meta { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-actions { display: flex; gap: 6px; margin-top: 8px; }
+.card-actions button { width: auto; margin: 0; flex: 1; }
+.card input.rename { width: 100%; padding: .3rem .45rem; background: #12151a; color: var(--fg);
+  border: 1px solid var(--accent); border-radius: 5px; font: inherit; font-weight: 600; }
+.library .empty { text-align: center; padding: 2rem 1rem; }
+button.danger.small { width: auto; }

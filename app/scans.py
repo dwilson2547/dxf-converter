@@ -74,7 +74,7 @@ class ConvertIn(BaseModel):
 
 def _objects(store: Store) -> ObjectStore:
     if store.objects is None:
-        raise HTTPException(503, "image storage is not configured on this server")
+        raise HTTPException(503, "Image storage isn't set up on this server.")
     return store.objects
 
 
@@ -84,14 +84,14 @@ def _owned(s, scan_id: str, user: User, lock: bool = False) -> Scan:
         q = q.with_for_update()
     scan = s.scalar(q)
     if scan is None:
-        raise HTTPException(404, "no such scan")
+        raise HTTPException(404, "That scan doesn't exist (or isn't yours).")
     return scan
 
 
 def _version(s, scan: Scan, number: int) -> Version:
     v = s.scalar(select(Version).where(Version.scan_id == scan.id, Version.number == number))
     if v is None:
-        raise HTTPException(404, "no such version")
+        raise HTTPException(404, "That version doesn't exist.")
     return v
 
 
@@ -111,10 +111,10 @@ def compute_stats(paths: list[Path]) -> dict:
 
 def _check_size(paths: list[Path]) -> None:
     if len(paths) > MAX_PATHS:
-        raise HTTPException(413, f"too many paths ({len(paths)} > {MAX_PATHS})")
+        raise HTTPException(413, f"Too many paths to save ({len(paths)}; the limit is {MAX_PATHS}).")
     n = sum(len(p.points) for p in paths)
     if n > MAX_POINTS:
-        raise HTTPException(413, f"too many points ({n} > {MAX_POINTS})")
+        raise HTTPException(413, f"Too many points to save ({n}; the limit is {MAX_POINTS}).")
 
 
 def _new_version(s, scan: Scan, body: VersionIn) -> Version:
@@ -169,9 +169,9 @@ def cached_image(store: Store, scan: Scan) -> str:
     try:
         data = _objects(store).get(scan.image_key)
     except ObjectNotFound:
-        raise HTTPException(410, "this scan's image is missing from storage") from None
+        raise HTTPException(410, "This scan's image is missing from storage.") from None
     if hashlib.sha256(data).hexdigest() != scan.image_sha256:
-        raise HTTPException(502, "stored image doesn't match its checksum")
+        raise HTTPException(502, "The stored image doesn't match its checksum.")
     os.makedirs(folder, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=folder)       # write-then-rename: no half files
     with os.fdopen(fd, "wb") as fh:
@@ -197,7 +197,7 @@ def save_scan(body: ScanIn, user: User = Depends(current_user),
             width, height = im.size
         thumb = _thumbnail(data)
     except Exception as exc:                      # noqa: BLE001
-        raise HTTPException(422, f"can't read the image: {exc}") from exc
+        raise HTTPException(422, f"Can't read the image: {exc}") from exc
 
     with store.db.session() as s:
         scan = Scan(user_id=user.id, name=body.name.strip(), image_key="",
@@ -279,11 +279,11 @@ def delete_scan(scan_id: str, user: User = Depends(current_user),
 
 def _stream(store: Store, key: str | None, fallback_type: str):
     if not key:
-        raise HTTPException(404, "no such image")
+        raise HTTPException(404, "That image doesn't exist.")
     try:
         chunks, ctype, length = _objects(store).stream(key)
     except ObjectNotFound:
-        raise HTTPException(410, "this image is missing from storage") from None
+        raise HTTPException(410, "This image is missing from storage.") from None
     headers = {"Cache-Control": "private, max-age=86400"}   # a scan's image never changes
     if length is not None:
         headers["Content-Length"] = str(length)
@@ -334,7 +334,7 @@ def save_version(scan_id: str, body: VersionIn, user: User = Depends(current_use
     with store.db.session() as s:
         scan = _owned(s, scan_id, user, lock=True)
         if body.parent_number is not None and body.parent_number > scan.last_version:
-            raise HTTPException(422, "parent_number is not a version of this scan")
+            raise HTTPException(422, "The parent version isn't a version of this scan.")
         v = _new_version(s, scan, body)
         s.flush()
         return _version_summary(v)
@@ -372,7 +372,7 @@ def delete_version(scan_id: str, number: int, user: User = Depends(current_user)
         v = _version(s, scan, number)
         count = s.scalar(select(func.count(Version.id)).where(Version.scan_id == scan.id))
         if count <= 1:
-            err = "that's the only version — delete the scan instead"
+            err = "That's the only version — delete the scan instead."
         else:
             err = None
             s.delete(v)

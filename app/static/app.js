@@ -144,6 +144,7 @@ async function upload(file) {
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'upload failed');
   const data = await res.json();
   S.id = data.id;
+  S.imageUrl = `/api/scan/${data.id}`;
   S.scan = null;                 // a new upload is anonymous work until saved
   document.dispatchEvent(new Event('scan-changed'));
   S.inks = []; S.hiddenLayers.clear(); S.pixels = null; S.report = null;
@@ -176,6 +177,20 @@ function readSettings() {
   return s;
 }
 
+/* The inverse of readSettings: put a saved version's settings back into the
+ * Detection controls, so Re-detect continues from where that version was. */
+function applySettings(st) {
+  for (const key of SETTINGS) if (st[key] !== undefined && st[key] !== null) $(key).value = st[key];
+  for (const key of PHOTO_SETTINGS) if (st[key] !== undefined && st[key] !== null) $(key).value = st[key];
+  for (const key of PHOTO_FLAGS) if (st[key] !== undefined) $(key).checked = !!st[key];
+  $('source').value = st.source || 'scan';
+  $('fit_mm').value = st.fit_mm ? Number(st.fit_mm).toFixed(2) : '';
+  $('dpi').value = st.dpi || '';
+  S.inks = Array.isArray(st.inks) ? [...st.inks] : [];
+  syncLabels();
+  renderInks();
+}
+
 /* mode 'new': a fresh upload — clean slate. mode 'redetect': same image,
  * new settings — the paths being replaced go onto the undo stack, so a
  * re-detect that made things worse is one Ctrl+Z away. */
@@ -184,18 +199,12 @@ async function detect(mode = 'new') {
   $('busy').hidden = false;
   clearError('detectErr');
   try {
-    const res = await fetch(`/api/convert/${S.id}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(readSettings()),
-    });
-    if (!res.ok) {
-      const detail = (await res.json().catch(() => ({}))).detail || 'conversion failed';
-      const err = new Error(detail);
-      err.status = res.status;
-      throw err;
-    }
-    const data = await res.json();
+    // A saved scan re-detects on its stored image (logged in); anonymous work
+    // on the upload. Both return the same shape.
+    const data = S.scan
+      ? await api(`/api/scans/${S.scan.id}/convert`,
+        { method: 'POST', auth: true, json: { settings: readSettings() } })
+      : await api(`/api/convert/${S.id}`, { method: 'POST', json: readSettings() });
 
     if (mode === 'redetect' && S.paths.length) {
       pushUndo();
@@ -221,7 +230,7 @@ async function detect(mode = 'new') {
     $('status').textContent = `${S.paths.length} paths · ${pointCount(S.paths)} points`;
   } catch (err) {
     $('status').textContent = 'Detection failed';
-    if (err.status === 404 && S.paths.length) {
+    if (err.status === 404 && S.paths.length && !S.scan) {
       showError('detectErr', 'The server restarted and lost the uploaded image. Your edits '
         + 'are still here and can be downloaded; re-upload the image to detect again.');
     } else {
@@ -306,7 +315,7 @@ function loadPixels() {
       resolve(S.pixels);
     };
     img.onerror = () => reject(new Error('could not read the image for picking'));
-    img.src = `/api/scan/${S.id}`;
+    img.src = S.imageUrl;
   });
 }
 
@@ -406,7 +415,7 @@ function render() {
   // Scan underlay.
   if ($('showScan').checked) {
     g.appendChild(el('image', {
-      href: `/api/scan/${S.id}`, x: 0, y: 0,
+      href: S.imageUrl, x: 0, y: 0,
       width: S.page.width_mm, height: S.page.height_mm,
       opacity: 0.35, preserveAspectRatio: 'none',
     }));
