@@ -163,8 +163,7 @@ Each phase ends tested and committed; release once at the end as **2.0.0**.
   `infra/cluster-config/example-secrets/dxf-converter/secret.yml`, applied by hand. Endpoint and
   bucket go in `values.yaml`, not the secret.
 - **Credentials verified 2026-10-02** from a pod reading that Secret: list, put, get and delete in
-  `dxf-converter` all succeed. They can also list `race-logger` — not yet scoped to this bucket;
-  a bucket-only policy was suggested.
+  `dxf-converter` all succeed.
 - **`minio/mc` and `quay.io/minio/mc` images would not pull** (Docker Hub pull failed; quay
   returned 401) on 2026-10-02. Phase 1 planned tests against a throwaway MinIO container — confirm
   a pullable server image first, or fall back to a scratch bucket prefix on AIStor.
