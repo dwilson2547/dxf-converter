@@ -143,6 +143,7 @@ async function upload(file) {
   const fd = new FormData();
   fd.append('file', file);
   const res = await fetch('/api/upload', { method: 'POST', body: fd });
+  if (res.status === 429) throw new Error(tooManyMessage(res));
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'upload failed');
   const data = await res.json();
   S.id = data.id;
@@ -836,6 +837,7 @@ async function exportDxf() {
         filename: $('expName').value || 'profile',
       }),
     });
+    if (res.status === 429) throw new Error(tooManyMessage(res));
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'export failed');
 
     const blob = await res.blob();

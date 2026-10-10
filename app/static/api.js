@@ -32,6 +32,12 @@ class ApiError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 
+/* A 429 comes from the ingress rate limit, not the app, so it has no JSON detail. */
+function tooManyMessage(res) {
+  const s = parseInt(res.headers.get('Retry-After') || '', 10);
+  return `Too many requests from your connection — wait ${s > 0 ? `${s} s` : 'a moment'} and try again.`;
+}
+
 async function api(path, { method = 'GET', json, body, auth = false, raw = false, retry = true } = {}) {
   const headers = {};
   let payload = body;
@@ -58,6 +64,7 @@ async function api(path, { method = 'GET', json, body, auth = false, raw = false
     }
     throw new ApiError(401, 'Not signed in.');
   }
+  if (res.status === 429) throw new ApiError(429, tooManyMessage(res));
   if (!res.ok) {
     let detail = `${res.status} ${res.statusText}`;
     try {

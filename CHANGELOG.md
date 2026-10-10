@@ -4,6 +4,13 @@ Each release is a git tag `vX.Y.Z` and a Docker image `dwilson2547/dxf-converter
 (`:latest` points at the newest release). The cluster runs the version pinned in
 `helm/dxf-converter/values.yaml` — bump `image.tag` there to roll out a release.
 
+## 3.0.1 — 2026-10-10
+
+### Added
+- Per-visitor rate limit on upload and convert (chart `heavyRateLimit`, 12/min, burst 10), on
+  top of the cluster-wide public limits in Traefik.
+- A rate-limited request says so and how long to wait, instead of "upload failed" or "429".
+
 ## 3.0.0 — 2026-10-10
 
 ### Breaking

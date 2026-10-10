@@ -246,6 +246,9 @@ Without `OIDC_ISSUER`/`OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET`/`PUBLIC_URL` the Sig
 hidden and the app is anonymous-only (local runs). Other knobs: `TOKEN_TTL_DAYS` (7),
 `CONVERT_WAIT_S` (60, then 503 while another conversion runs), `UPLOAD_TTL_S` (6 h idle before
 an upload is cleaned up) and `WORKDIR_BUDGET_MB` (1536, under the 2 Gi `emptyDir`).
+Upload and convert are also rate-limited per visitor at the ingress (`heavyRateLimit` in the
+chart), on top of the cluster-wide public limits (cluster-config
+`docs/public_edge_protection.md`).
 
 Pre-3.0 password accounts are claimed by the first authentik sign-in with the same username
 (authentik's `preferred_username`, lowercased). Rename one first if the names differ:
@@ -262,7 +265,7 @@ Check what's running with `curl https://dxf-converter.danwils.com/api/version`.
 
 ## Status
 
-3.0.0: public, with authentik sign-in; saved scans with versions and compare, admin panel; scan
+3.0.1: public, with authentik sign-in and per-visitor limits; saved scans with versions and compare, admin panel; scan
 and photo modes; 135 tests passing (plus one opt-in test against the real bucket).
 
 Nothing persists across a restart — uploads live in a temp directory (an `emptyDir` in the

@@ -2,7 +2,7 @@ image:
   repository: dwilson2547/dxf-converter
   # A release from CHANGELOG.md. Bumping this is how a release reaches the
   # cluster; :latest is pushed too, but the chart doesn't follow it.
-  tag: "3.0.0"
+  tag: "3.0.1"
   pullPolicy: IfNotPresent
 
 # Public (Traefik pubsecure, letsencrypt-prod, external-dns): anyone can
@@ -20,6 +20,14 @@ accounts:
     endpoint: http://192.168.0.10:30320     # AIStor S3 API (not the console port)
     bucket: dxf-converter
     credentialsSecret: dxf-converter-bucket-credentials   # S3_ACCESS_KEY / S3_SECRET_KEY
+
+# Per-visitor limit on upload and convert (anonymous, CPU/disk heavy). Detection
+# is user-triggered and takes seconds, so a person stays well under this; a script
+# can't hold the single conversion slot. Unset to disable.
+heavyRateLimit:
+  average: 12
+  period: 1m
+  burst: 10
 
 # authentik OIDC client (cluster-config authentik/blueprints/dxf-converter.yaml).
 # The redirect URI derives from ingress.host. Needs accounts.enabled.
