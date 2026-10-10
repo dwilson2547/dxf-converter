@@ -1,4 +1,6 @@
-"""Admin panel API: list users, delete a user's content, delete a user.
+"""Admin panel API: list users, delete a user's content, delete a user, sign
+a user out everywhere. Who is an admin is decided in authentik (oidc.py), so
+there is no role editing or password reset here.
 
 Every route requires an admin token. User ids, not usernames, address users
 here, so a rename later can't point a delete at the wrong account.
@@ -7,7 +9,6 @@ here, so a rename later can't point a delete at the wrong account.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from .accounts import Store, get_store, require_admin
@@ -41,6 +42,8 @@ def list_users(admin: User = Depends(require_admin), store: Store = Depends(get_
             "id": u.id, "username": u.username, "is_admin": u.is_admin,
             "created_at": u.created_at.isoformat(), "scans": n_scans,
             "versions": n_versions, "you": u.id == admin.id,
+            # From before 3.0.0 and not yet claimed through authentik.
+            "unclaimed": bool(u.password_hash),
         } for u, n_scans, n_versions in rows]}
 
 
@@ -72,45 +75,12 @@ def delete_user(user_id: str, admin: User = Depends(require_admin),
     return {"deleted": gone}
 
 
-@router.post("/users/{user_id}/password")
-def reset_password(user_id: str, admin: User = Depends(require_admin),
-                   store: Store = Depends(get_store)):
-    """Give the user a generated password, returned once (only its hash is
-    kept), and sign them out everywhere."""
-    if user_id == admin.id:
-        raise HTTPException(409, "Change your own password from Account instead.")
-    pw = auth.generate_password()
-    with store.db.session() as s:
-        user = _get_user(s, user_id)
-        auth.set_password(s, user.username, pw)
-        name = user.username
-    return {"username": name, "password": pw}
-
-
-class RoleChange(BaseModel):
-    is_admin: bool
-
-
-@router.patch("/users/{user_id}")
-def set_role(user_id: str, body: RoleChange, admin: User = Depends(require_admin),
+@router.post("/users/{user_id}/logout")
+def sign_out(user_id: str, admin: User = Depends(require_admin),
              store: Store = Depends(get_store)):
-    if user_id == admin.id:
-        raise HTTPException(409, "You can't change your own role — ask another admin.")
+    """End every session the user has. Their next sign-in goes through
+    authentik, so it also picks up any change to their groups."""
     with store.db.session() as s:
         user = _get_user(s, user_id)
-        if user.is_admin and not body.is_admin:
-            admins = s.scalar(select(func.count(User.id)).where(User.is_admin.is_(True)))
-            if admins <= 1:
-                err = "That's the last admin; make someone else an admin first."
-            else:
-                err = None
-        else:
-            err = None
-        if not err:
-            user.is_admin = body.is_admin
-            # Their open sessions pick up the new role on the next request
-            # (roles are read from the database every time), nothing to revoke.
-            out = {"id": user.id, "username": user.username, "is_admin": user.is_admin}
-    if err:
-        raise HTTPException(409, err)
-    return out
+        n = auth.revoke_user_tokens(s, user.id)
+        return {"username": user.username, "sessions": n}

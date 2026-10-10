@@ -1,9 +1,13 @@
-"""Accounts: passwords and bearer tokens.
+"""Accounts and bearer tokens.
+
+Who someone is comes from authentik (app/oidc.py); this module creates the
+local account and the app's own session token.
 
 Tokens travel in the Authorization header, not a cookie — no cookie expiry or
 SameSite surprises in the browser. They are random, not JWTs: a random token
-is checked against the database on every request, so logging out (deleting
-the row) ends it immediately, which a JWT can't do without a denylist.
+is checked against the database on every request, so logging out, deleting a
+user or "sign out everywhere" (deleting the rows) ends it immediately, which a
+JWT can't do without a denylist.
 
 Expiry slides: a token lasts token_ttl_days from its last use. To avoid a
 write on every request, expires_at is pushed forward at most once a day.
@@ -16,21 +20,13 @@ import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from argon2 import PasswordHasher
-from argon2.exceptions import InvalidHashError, VerificationError
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from .models import AuthToken, User, utcnow
 
-_hasher = PasswordHasher()        # argon2id, library defaults
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
-MIN_PASSWORD = 8
 REFRESH_EVERY = timedelta(days=1)
-
-# Verifying against a real hash when the user doesn't exist keeps a failed
-# login for an unknown name as slow as one for a wrong password.
-_DUMMY_HASH = _hasher.hash(secrets.token_urlsafe(16))
 
 
 class AuthError(Exception):
@@ -50,70 +46,39 @@ def normalize(username: str) -> str:
     return (username or "").strip().lower()
 
 
-def generate_password() -> str:
-    """24 URL-safe characters (~144 bits) — for the bootstrap admin."""
-    return secrets.token_urlsafe(18)
-
-
-def create_user(s: Session, username: str, password: str, is_admin: bool = False) -> User:
+def create_user(s: Session, username: str, is_admin: bool = False) -> User:
     username = normalize(username)
     if not USERNAME_RE.match(username):
         raise AuthError("Usernames are 1-64 letters, digits, _ . or -.")
-    if len(password or "") < MIN_PASSWORD:
-        raise AuthError(f"Passwords must be at least {MIN_PASSWORD} characters.")
     if s.scalar(select(User).where(User.username == username)):
         raise AuthError(f"The username {username!r} already exists.")
-    user = User(username=username, password_hash=_hasher.hash(password), is_admin=is_admin)
+    user = User(username=username, password_hash="", is_admin=is_admin)
     s.add(user)
     s.flush()
     return user
 
 
-def set_password(s: Session, username: str, password: str) -> None:
-    user = s.scalar(select(User).where(User.username == normalize(username)))
+def unique_username(s: Session, wanted: str) -> str:
+    """wanted, cleaned to the allowed characters, with a number appended if
+    it is taken."""
+    base = re.sub(r"[^a-z0-9_.-]", "", normalize(wanted))[:60] or "user"
+    name, n = base, 1
+    while s.scalar(select(User.id).where(User.username == name)):
+        n += 1
+        name = f"{base}{n}"
+    return name
+
+
+def rename_user(s: Session, old: str, new: str) -> User:
+    user = s.scalar(select(User).where(User.username == normalize(old)))
     if not user:
-        raise AuthError(f"There is no user {username!r}.")
-    if len(password or "") < MIN_PASSWORD:
-        raise AuthError(f"Passwords must be at least {MIN_PASSWORD} characters.")
-    user.password_hash = _hasher.hash(password)
-    # A password change signs out every existing token.
-    s.execute(delete(AuthToken).where(AuthToken.user_id == user.id))
-
-
-def change_password(s: Session, user: User, current: str, new: str,
-                    keep_token: str | None = None) -> None:
-    """The user changing their own password: needs the current one. Every
-    other session is signed out; the one making the change stays."""
-    try:
-        _hasher.verify(user.password_hash, current or "")
-    except (VerificationError, InvalidHashError):
-        raise AuthError("The current password is wrong.") from None
-    if len(new or "") < MIN_PASSWORD:
-        raise AuthError(f"Passwords must be at least {MIN_PASSWORD} characters.")
-    user.password_hash = _hasher.hash(new)
-    q = delete(AuthToken).where(AuthToken.user_id == user.id)
-    if keep_token:
-        q = q.where(AuthToken.token_hash != _token_hash(keep_token))
-    s.execute(q)
-
-
-def check_password(user: User, password: str) -> bool:
-    try:
-        return _hasher.verify(user.password_hash, password or "")
-    except (VerificationError, InvalidHashError):
-        return False
-
-
-def authenticate(s: Session, username: str, password: str) -> User:
-    user = s.scalar(select(User).where(User.username == normalize(username)))
-    try:
-        _hasher.verify(user.password_hash if user else _DUMMY_HASH, password or "")
-    except (VerificationError, InvalidHashError):
-        raise AuthError("Wrong username or password.") from None
-    if not user:
-        raise AuthError("Wrong username or password.")
-    if _hasher.check_needs_rehash(user.password_hash):
-        user.password_hash = _hasher.hash(password)
+        raise AuthError(f"There is no user {old!r}.")
+    new = normalize(new)
+    if not USERNAME_RE.match(new):
+        raise AuthError("Usernames are 1-64 letters, digits, _ . or -.")
+    if s.scalar(select(User.id).where(User.username == new, User.id != user.id)):
+        raise AuthError(f"The username {new!r} already exists.")
+    user.username = new
     return user
 
 
@@ -146,6 +111,12 @@ def revoke_token(s: Session, token: str) -> bool:
         return False
     s.delete(row)
     return True
+
+
+def revoke_user_tokens(s: Session, user_id: str) -> int:
+    """Sign the user out everywhere. Their next sign-in goes through authentik
+    again, which re-reads their groups."""
+    return s.execute(delete(AuthToken).where(AuthToken.user_id == user_id)).rowcount
 
 
 def purge_expired(s: Session) -> int:

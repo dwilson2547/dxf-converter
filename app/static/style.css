@@ -314,7 +314,3 @@ button.danger.small { width: auto; }
 .admin-table .actions button { width: auto; margin: 0; }
 .admin-table .actions .error-strip { flex-basis: 100%; margin-top: 4px; }
 .loading-row { color: var(--muted); padding: 1rem 8px; display: flex; align-items: center; gap: 8px; }
-.secret { display: flex; gap: 8px; align-items: center; margin: 10px 0 4px; padding: 8px 10px;
-  border-radius: 6px; background: #0f1216; border: 1px solid var(--line); }
-.secret code { flex: 1; font-size: 15px; letter-spacing: .02em; user-select: all; word-break: break-all; }
-.secret button { width: auto; margin: 0; }

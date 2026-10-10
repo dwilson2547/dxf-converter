@@ -28,9 +28,7 @@ def client(store):
 
 def _user(store, client, name="dan"):
     with store.db.session() as s:
-        auth.create_user(s, name, "correct horse")
-    tok = client.post("/api/auth/login",
-                      json={"username": name, "password": "correct horse"}).json()["token"]
+        tok, _ = auth.issue_token(s, auth.create_user(s, name), 7)
     return {"Authorization": f"Bearer {tok}"}
 
 
@@ -116,8 +114,7 @@ def test_saving_needs_image_storage(client, store_cfg):
     try:
         c = TestClient(app)
         with accounts.current_store().db.session() as s:
-            auth.create_user(s, "dan", "correct horse")
-        tok = c.post("/api/auth/login", json={"username": "dan", "password": "correct horse"}).json()["token"]
+            tok, _ = auth.issue_token(s, auth.create_user(s, "dan"), 7)
         res = c.post("/api/scans", headers={"Authorization": f"Bearer {tok}"},
                      json={"upload_id": upload(c), "name": "x", "settings": {}, "paths": []})
         assert res.status_code == 503

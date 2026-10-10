@@ -14,8 +14,9 @@ uvicorn[standard]>=0.27
 python-multipart>=0.0.9
 httpx>=0.27
 
-# accounts + saved scans (optional at runtime: off without DATABASE_URL)
+# accounts + saved scans (optional at runtime: off without DATABASE_URL);
+# sign-in through authentik verifies ID tokens with PyJWT
 sqlalchemy>=2.0
 psycopg[binary]>=3.1
-argon2-cffi>=23.1
+PyJWT[crypto]>=2.8
 boto3>=1.34

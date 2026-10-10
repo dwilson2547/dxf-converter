@@ -3,16 +3,20 @@
 /* API client, accounts and views. Loaded after ui.js, before app.js.
  *
  * Auth is a bearer token in the Authorization header (no cookies), kept in
- * localStorage so a reload stays logged in. Any authed call that comes back
- * 401 opens the login dialog over whatever is on screen — the editor is never
- * touched — and retries the call once after a successful login. */
+ * localStorage so a reload stays signed in. Signing in is through authentik,
+ * in a popup (/api/auth/oidc/login): its result page puts the token in
+ * localStorage under SIGNIN_KEY, which this window hears as a `storage`
+ * event, so the editor is never touched. Any authed call that comes back 401
+ * asks to sign in over whatever is on screen and retries the call once
+ * after a successful sign-in. */
 
 const TOKEN_KEY = 'dxfconv.token';
+const SIGNIN_KEY = 'dxfconv.signin';
 
 const API = {
   token: null,
   user: null,                         // { username, is_admin }
-  status: { accounts: false, storage: false, signup: false },
+  status: { accounts: false, storage: false, signin: false },
 };
 
 try { API.token = localStorage.getItem(TOKEN_KEY); } catch (_) { /* private mode */ }
@@ -48,11 +52,11 @@ async function api(path, { method = 'GET', json, body, auth = false, raw = false
     const hadToken = !!API.token;
     setLoggedOut();
     if (retry && await requireLogin(hadToken
-      ? 'Your session expired — log in again to continue.'
-      : 'Log in to continue.')) {
+      ? 'Your session expired — sign in again to continue.'
+      : 'Sign in to continue.')) {
       return api(path, { method, json, body, auth, raw, retry: false });
     }
-    throw new ApiError(401, 'Not logged in.');
+    throw new ApiError(401, 'Not signed in.');
   }
   if (!res.ok) {
     let detail = `${res.status} ${res.statusText}`;
@@ -83,107 +87,139 @@ function setLoggedOut() {
 }
 
 async function initAuth() {
+  const pending = takeSignin();
+  if (pending && pending.token) storeToken(pending.token);
   try {
     API.status = await api('/api/auth/status');
   } catch (_) {
-    API.status = { accounts: false, storage: false, signup: false };
+    API.status = { accounts: false, storage: false, signin: false };
   }
   if (API.status.accounts && API.token) {
     // A stale token on page load just means "logged out" — no dialog.
     try {
       const me = await api('/api/auth/me', { auth: true, retry: false });
       setLoggedIn({ username: me.username, is_admin: me.is_admin });
+      if (pending && pending.token) toast(`Signed in as ${me.username}`);
       return;
     } catch (_) { setLoggedOut(); return; }
   }
   renderAccount();
   document.dispatchEvent(new CustomEvent('auth-changed'));
+  if (pending && pending.error) toast(`Sign-in failed: ${pending.error}`);
 }
 
 async function logout() {
   try { await api('/api/auth/logout', { method: 'POST', auth: true, retry: false }); } catch (_) { /* gone anyway */ }
   setLoggedOut();
   if (currentView === 'admin') showView('home');
-  toast('Logged out');
+  toast('Signed out');
 }
 
-/* ---------- login / sign-up dialog ----------
- * requireLogin(reason) resolves true once someone is logged in, false if the
+/* ---------- sign-in (authentik, in a popup) ----------
+ * requireLogin(reason) resolves true once someone is signed in, false if the
  * dialog was dismissed. Concurrent callers share one dialog. */
+
+/* The result page of the popup leaves {token, username} or {error} under
+ * SIGNIN_KEY. Read it once and remove it, so it is never left lying there. */
+function takeSignin(raw) {
+  let value = raw;
+  try {
+    if (value === undefined) value = localStorage.getItem(SIGNIN_KEY);
+    if (value) localStorage.removeItem(SIGNIN_KEY);
+  } catch (_) { return null; }
+  if (!value) return null;
+  try {
+    const r = JSON.parse(value);
+    return Date.now() - (r.at || 0) < 10 * 60 * 1000 ? r : null;   // stale: ignore
+  } catch (_) { return null; }
+}
+
+let signinWaiters = [];
+
+async function finishSignin(r) {
+  if (!r) return;
+  const waiters = signinWaiters; signinWaiters = [];
+  if (r.error) { waiters.forEach((w) => w.fail(r.error)); if (!waiters.length) toast(`Sign-in failed: ${r.error}`); return; }
+  storeToken(r.token);
+  try {
+    const me = await api('/api/auth/me', { auth: true, retry: false });
+    setLoggedIn({ username: me.username, is_admin: me.is_admin });
+    toast(`Signed in as ${me.username}`);
+    waiters.forEach((w) => w.ok());
+  } catch (err) {
+    setLoggedOut();
+    waiters.forEach((w) => w.fail(err.message));
+  }
+}
+
+window.addEventListener('storage', (e) => {
+  if (e.key === SIGNIN_KEY && e.newValue) finishSignin(takeSignin(e.newValue));
+});
+
+/* Open the authentik popup. Must run from a click, or the browser blocks
+ * it; if it is blocked anyway, fall back to signing in in this tab. */
+function openSignin() {
+  const w = 520, h = 680;
+  const left = window.screenX + Math.max(0, (window.outerWidth - w) / 2);
+  const top = window.screenY + Math.max(0, (window.outerHeight - h) / 2);
+  const popup = window.open('/api/auth/oidc/login?popup=1', 'dxfconv-signin',
+    `popup,width=${w},height=${h},left=${left},top=${top}`);
+  if (!popup) {
+    if (currentView === 'editor' && typeof S !== 'undefined' && S.dirty
+      && !confirm('Your browser blocked the sign-in window. Sign in in this tab instead? Unsaved edits will be lost.')) {
+      return false;
+    }
+    location.href = '/api/auth/oidc/login';
+  }
+  return true;
+}
 
 let loginPending = null;
 
-function requireLogin(reason, mode = 'login') {
+function requireLogin(reason) {
   if (API.user) return Promise.resolve(true);
-  if (!API.status.accounts) return Promise.resolve(false);
+  if (!API.status.accounts || !API.status.signin) return Promise.resolve(false);
   if (!loginPending) {
-    loginPending = authDialog(mode, reason).finally(() => { loginPending = null; });
+    loginPending = signinDialog(reason).finally(() => { loginPending = null; });
   }
   return loginPending;
 }
 
-async function authDialog(mode = 'login', reason = '') {
-  let current = mode === 'signup' && API.status.signup ? 'signup' : 'login';
+async function signinDialog(reason = '') {
   const body = document.createElement('div');
-
-  const draw = () => {
-    const signup = current === 'signup';
-    body.innerHTML = `
-      ${reason ? `<p class="hint">${escapeHtml(reason)}</p>` : ''}
-      <label>Username
-        <input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
-      <label>Password
-        <input name="password" type="password" autocomplete="${signup ? 'new-password' : 'current-password'}" required></label>
-      ${signup ? `<label>Confirm password
-        <input name="confirm" type="password" autocomplete="new-password" required></label>
-        <p class="hint">Letters, digits and _ . - for the name; at least 8 characters for the password.</p>` : ''}
-      ${API.status.signup ? `<p class="switch">${signup
-        ? 'Have an account? <a href="#" data-to="login">Log in</a>'
-        : 'No account? <a href="#" data-to="signup">Sign up</a>'}</p>` : ''}`;
-    const sw = body.querySelector('[data-to]');
-    if (sw) {
-      sw.onclick = (e) => {
-        e.preventDefault();
-        const keep = body.querySelector('[name=username]').value;
-        current = sw.dataset.to;
-        draw();
-        body.querySelector('[name=username]').value = keep;
-        const title = body.closest('form')?.querySelector('h3');
-        if (title) title.textContent = current === 'signup' ? 'Sign up' : 'Log in';
-        const btn = body.closest('form')?.querySelector('footer button.primary');
-        if (btn) btn.textContent = current === 'signup' ? 'Create account' : 'Log in';
-        body.closest('form')?.setError(null);
-        body.querySelector('[name=password]').focus();
-      };
-    }
+  body.innerHTML = `
+    ${reason ? `<p class="hint">${escapeHtml(reason)}</p>` : ''}
+    <p class="signin-msg">Sign in with your danwils account. A sign-in window opens; this page
+      stays as it is.</p>`;
+  // Not a busy submit: the user may close the popup without finishing, so
+  // the dialog stays cancellable and closes itself when the sign-in lands.
+  let form = null;
+  const waiter = {
+    ok: () => { if (dialogOpen && dialogOpen.form === form) dialogOpen.close('ok'); },
+    fail: (m) => {
+      signinWaiters.push(waiter);               // still open: allow another try
+      if (form) form.setError(`Sign-in failed: ${m}`);
+    },
   };
-  draw();
-
-  const result = await openDialog({
-    title: current === 'signup' ? 'Sign up' : 'Log in',
+  signinWaiters.push(waiter);
+  const shown = openDialog({
+    title: 'Sign in',
     body,
     actions: [
       { label: 'Cancel', kind: 'ghost', value: null },
-      { label: current === 'signup' ? 'Create account' : 'Log in', kind: 'primary', value: 'ok', submit: true },
+      { label: 'Sign in', kind: 'primary', value: 'ok', submit: true },
     ],
-    onSubmit: async (form) => {
-      const username = form.querySelector('[name=username]').value.trim();
-      const password = form.querySelector('[name=password]').value;
-      if (!username) throw new Error('Enter a username.');
-      if (!password) throw new Error('Enter a password.');
-      if (current === 'signup') {
-        if (password !== form.querySelector('[name=confirm]').value) {
-          throw new Error("The passwords don't match.");
-        }
-      }
-      const res = await api(current === 'signup' ? '/api/auth/signup' : '/api/auth/login',
-        { method: 'POST', json: { username, password } });
-      setLoggedIn(res.user, res.token);
-      toast(current === 'signup' ? `Welcome, ${res.user.username}` : `Logged in as ${res.user.username}`);
-      return true;
+    onSubmit: async (f) => {
+      f.setError(null);
+      if (!openSignin()) return false;
+      body.querySelector('.signin-msg').textContent =
+        'Waiting for you to finish signing in in the other window…';
+      return false;
     },
   });
-  return result === 'ok';
+  form = dialogOpen && dialogOpen.form;        // set synchronously by openDialog
+  const result = await shown.finally(() => { signinWaiters = signinWaiters.filter((w) => w !== waiter); });
+  return result === 'ok' && !!API.user;
 }
 
 /* ---------- account area (top bar) ---------- */
@@ -194,16 +230,11 @@ function renderAccount() {
   el.innerHTML = '';
   if (!API.status.accounts) return;           // accounts off: nothing to show
   if (!API.user) {
+    if (!API.status.signin) return;           // no authentik configured
     const login = document.createElement('button');
-    login.className = 'ghost small'; login.textContent = 'Log in';
-    login.onclick = () => authDialog('login');
+    login.className = 'primary small'; login.textContent = 'Sign in';
+    login.onclick = () => openSignin();
     el.appendChild(login);
-    if (API.status.signup) {
-      const up = document.createElement('button');
-      up.className = 'primary small'; up.textContent = 'Sign up';
-      up.onclick = () => authDialog('signup');
-      el.appendChild(up);
-    }
     return;
   }
   const btn = document.createElement('button');
@@ -220,7 +251,7 @@ function renderAccount() {
       showView('admin');
     }]);
   }
-  items.push(['Log out', logout]);
+  items.push(['Sign out', logout]);
   for (const [label, fn] of items) {
     const it = document.createElement('button');
     it.setAttribute('role', 'menuitem'); it.textContent = label;
@@ -248,60 +279,40 @@ async function accountDialog() {
   const body = document.createElement('div');
   body.innerHTML = `
     <p><b>${escapeHtml(me.username)}</b>${me.is_admin ? ' <span class="badge">admin</span>' : ''}</p>
-    <p class="hint">Member since ${new Date(me.created_at).toLocaleDateString()}.</p>`;
+    <p class="hint">Member since ${new Date(me.created_at).toLocaleDateString()}. You sign in with
+      your danwils account; manage it at <a href="https://auth.danwils.com/if/user/" target="_blank" rel="noopener">auth.danwils.com</a>.</p>`;
   const choice = await openDialog({
     title: 'Account',
     body,
     actions: [
       { label: 'Delete account…', kind: 'danger', value: 'delete' },
-      { label: 'Change password', kind: 'ghost', value: 'password' },
+      { label: 'Sign out everywhere', kind: 'ghost', value: 'all' },
       { label: 'Close', kind: 'primary', value: null },
     ],
   });
-  if (choice === 'password') return changePasswordDialog();
+  if (choice === 'all') return signOutEverywhere();
   if (choice === 'delete') return deleteAccountDialog(me);
 }
 
-async function changePasswordDialog() {
-  const body = document.createElement('div');
-  body.innerHTML = `
-    <label>Current password
-      <input name="current" type="password" autocomplete="current-password"></label>
-    <label>New password
-      <input name="new" type="password" autocomplete="new-password"></label>
-    <label>Confirm new password
-      <input name="confirm" type="password" autocomplete="new-password"></label>
-    <p class="hint">At least 8 characters. Your other logged-in browsers will be signed out;
-      this one stays logged in.</p>`;
-  const done = await openDialog({
-    title: 'Change password',
-    body,
-    actions: [
-      { label: 'Cancel', kind: 'ghost', value: null },
-      { label: 'Change password', kind: 'primary', value: 'ok', submit: true },
-    ],
-    onSubmit: async (form) => {
-      const current = form.querySelector('[name=current]').value;
-      const next = form.querySelector('[name=new]').value;
-      if (!current) throw new Error('Enter your current password.');
-      if (next !== form.querySelector('[name=confirm]').value) throw new Error("The new passwords don't match.");
-      await api('/api/auth/password', { method: 'POST', auth: true,
-        json: { current_password: current, new_password: next } });
-      return true;
-    },
-  });
-  if (done) toast('Password changed — your other sessions were signed out');
+async function signOutEverywhere() {
+  if (!(await confirmDialog({
+    title: 'Sign out everywhere?',
+    body: 'Every browser signed in to this account is signed out, this one included.',
+    confirmLabel: 'Sign out everywhere',
+  }))) return;
+  try { await api('/api/auth/logout-all', { method: 'POST', auth: true, retry: false }); } catch (_) { /* gone anyway */ }
+  setLoggedOut();
+  if (currentView === 'admin') showView('home');
+  toast('Signed out everywhere');
 }
 
 async function deleteAccountDialog(me) {
   const body = document.createElement('div');
   body.innerHTML = `
-    <p>This deletes <b>${escapeHtml(me.username)}</b> and every scan and version you've saved.
-      It can't be undone.</p>
+    <p>This deletes <b>${escapeHtml(me.username)}</b> here and every scan and version you've saved.
+      It can't be undone. Your danwils sign-in account is not affected.</p>
     <label>Type your username to confirm
-      <input name="confirmName" autocomplete="off" autocapitalize="none" spellcheck="false"></label>
-    <label>Password
-      <input name="password" type="password" autocomplete="current-password"></label>`;
+      <input name="confirmName" autocomplete="off" autocapitalize="none" spellcheck="false"></label>`;
   const done = await openDialog({
     title: 'Delete your account?',
     body,
@@ -310,11 +321,9 @@ async function deleteAccountDialog(me) {
       { label: 'Delete my account', kind: 'danger solid', value: 'ok', submit: true },
     ],
     onSubmit: async (form) => {
-      if (form.querySelector('[name=confirmName]').value.trim().toLowerCase() !== me.username) {
-        throw new Error(`Type “${me.username}” to confirm.`);
-      }
-      await api('/api/auth/me', { method: 'DELETE', auth: true,
-        json: { password: form.querySelector('[name=password]').value } });
+      const typed = form.querySelector('[name=confirmName]').value.trim().toLowerCase();
+      if (typed !== me.username) throw new Error(`Type “${me.username}” to confirm.`);
+      await api('/api/auth/me', { method: 'DELETE', auth: true, json: { username: typed } });
       return true;
     },
   });

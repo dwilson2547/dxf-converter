@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from .accounts import Store, current_user, get_store
-from .editing import (WORKDIR, ExportRequest, Path, Settings, convert_file,
+from .editing import (WORKDIR, make_room, ExportRequest, Path, Settings, convert_file,
                       export_response, upload_path)
 from .store import ObjectNotFound, ObjectStore
 from .store.models import Scan, User, Version, utcnow
@@ -172,6 +172,7 @@ def cached_image(store: Store, scan: Scan) -> str:
         raise HTTPException(410, "This scan's image is missing from storage.") from None
     if hashlib.sha256(data).hexdigest() != scan.image_sha256:
         raise HTTPException(502, "The stored image doesn't match its checksum.")
+    make_room(len(data))
     os.makedirs(folder, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=folder)       # write-then-rename: no half files
     with os.fdopen(fd, "wb") as fh:

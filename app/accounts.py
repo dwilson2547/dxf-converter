@@ -1,5 +1,5 @@
-"""Sign-up, login, logout and who-am-I, plus the dependencies other routes
-use to require a user or an admin.
+"""Session, logout and who-am-I, plus the dependencies other routes use to
+require a user or an admin. Signing in is oidc.py (authentik).
 
 Clients send `Authorization: Bearer <token>`. Accounts are optional: when
 DATABASE_URL isn't set, /api/auth/status says so and everything else here
@@ -9,11 +9,9 @@ answers 503, while upload/convert/export keep working anonymously.
 from __future__ import annotations
 
 import threading
-import time
-from collections import defaultdict, deque
 from dataclasses import dataclass
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 
 from .store import Database, ObjectStore, StoreConfig
@@ -98,83 +96,16 @@ def require_admin(user: User = Depends(current_user)) -> User:
     return user
 
 
-# --- throttling ---------------------------------------------------------------
-# Argon2 already makes each guess slow; this caps how many a client gets.
-
-FAIL_WINDOW_S = 600
-FAIL_LIMIT = 10
-_fails: dict[tuple[str, str], deque] = defaultdict(deque)
-
-SIGNUP_WINDOW_S = 3600
-SIGNUP_LIMIT = 5
-_signups: dict[str, deque] = defaultdict(deque)
-
-
-def _throttled(key, log=_fails, window=FAIL_WINDOW_S, limit=FAIL_LIMIT) -> bool:
-    q = log[key]
-    now = time.monotonic()
-    while q and now - q[0] > window:
-        q.popleft()
-    return len(q) >= limit
-
-
 # --- routes -------------------------------------------------------------------
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-def _session_response(s, store: Store, user: User) -> dict:
-    token, expires = auth.issue_token(s, user, store.cfg.token_ttl_days)
-    return {"token": token, "token_type": "bearer", "expires_at": expires.isoformat(),
-            "user": {"username": user.username, "is_admin": user.is_admin}}
-
+# Signing in is oidc.py; these cover the session it hands out.
 
 @router.get("/status")
 def status():
+    from . import oidc
     store = current_store()
     return {"accounts": store is not None,
             "storage": bool(store and store.objects),
-            "signup": bool(store and store.cfg.allow_signup)}
-
-
-@router.post("/signup")
-def signup(req: LoginRequest, request: Request, store: Store = Depends(get_store)):
-    """Create an ordinary (non-admin) account and log straight in."""
-    if not store.cfg.allow_signup:
-        raise HTTPException(403, "Sign-up is turned off — ask an admin for an account.")
-    ip = request.client.host if request.client else "?"
-    if _throttled(ip, _signups, SIGNUP_WINDOW_S, SIGNUP_LIMIT):
-        raise HTTPException(429, "Too many sign-ups from here — try again later.")
-    with store.db.session() as s:
-        try:
-            user = auth.create_user(s, req.username, req.password)
-        except auth.AuthError as exc:
-            err = str(exc)
-        else:
-            err = None
-            body = _session_response(s, store, user)
-    if err:
-        raise HTTPException(409 if "exists" in err else 422, err)
-    _signups[ip].append(time.monotonic())
-    return body
-
-
-@router.post("/login")
-def login(req: LoginRequest, request: Request, store: Store = Depends(get_store)):
-    key = (request.client.host if request.client else "?", auth.normalize(req.username))
-    if _throttled(key):
-        raise HTTPException(429, "Too many failed logins — wait a few minutes and try again.")
-    with store.db.session() as s:
-        try:
-            user = auth.authenticate(s, req.username, req.password)
-        except auth.AuthError as exc:
-            _fails[key].append(time.monotonic())
-            raise _unauthorized(str(exc)) from None
-        body = _session_response(s, store, user)
-    _fails.pop(key, None)
-    return body
+            "signin": bool(store and oidc.config().enabled)}
 
 
 @router.post("/logout")
@@ -184,51 +115,37 @@ def logout(authorization: str | None = Header(None), store: Store = Depends(get_
     return {"ok": True}
 
 
-class PasswordChange(BaseModel):
-    current_password: str
-    new_password: str
+@router.post("/logout-all")
+def logout_all(user: User = Depends(current_user), store: Store = Depends(get_store)):
+    """Sign out every browser, this one included."""
+    with store.db.session() as s:
+        n = auth.revoke_user_tokens(s, user.id)
+    return {"ok": True, "sessions": n}
 
 
 class Confirm(BaseModel):
-    password: str
-
-
-@router.post("/password")
-def change_password(req: PasswordChange, authorization: str | None = Header(None),
-                    user: User = Depends(current_user), store: Store = Depends(get_store)):
-    with store.db.session() as s:
-        row = s.get(User, user.id)
-        try:
-            auth.change_password(s, row, req.current_password, req.new_password,
-                                 keep_token=_bearer(authorization))
-        except auth.AuthError as exc:
-            err = str(exc)
-        else:
-            err = None
-    if err:
-        raise HTTPException(422, err)
-    return {"ok": True}
+    username: str
 
 
 @router.delete("/me")
 def delete_me(req: Confirm, user: User = Depends(current_user),
               store: Store = Depends(get_store)):
-    """Delete your own account and everything you saved. Needs the password,
-    so a borrowed, unlocked browser can't do it in one click."""
+    """Delete your own account and everything you saved. Needs the username
+    typed back, so it can't happen in one click. The authentik account stays;
+    signing in again starts a new, empty account."""
     from .store import content
+    if auth.normalize(req.username) != user.username:
+        raise HTTPException(422, f"Type your username, {user.username!r}, to confirm.")
     with store.db.session() as s:
         row = s.get(User, user.id)
-        if not auth.check_password(row, req.password):
-            err, code = "The password is wrong.", 422
-        else:
-            try:
-                gone = content.delete_user(s, store.objects, row)
-                err = None
-            except content.LastAdminError:
-                err, code = ("You're the only admin, so this account can't be deleted. "
-                             "Make someone else an admin first."), 409
+        try:
+            gone = content.delete_user(s, store.objects, row)
+            err = None
+        except content.LastAdminError:
+            err = ("You're the only admin, so this account can't be deleted. "
+                   "Add someone else to the admin group in authentik first.")
     if err:
-        raise HTTPException(code, err)
+        raise HTTPException(409, err)
     return {"deleted": gone}
 
 

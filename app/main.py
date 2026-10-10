@@ -24,9 +24,9 @@ from fastapi.staticfiles import StaticFiles
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dxfconv import __version__                              # noqa: E402
-from app import accounts, admin_api, scans                   # noqa: E402
+from app import accounts, admin_api, oidc, scans             # noqa: E402
 from app.editing import (ALLOWED, MAX_BYTES, WORKDIR, ExportRequest,  # noqa: E402
-                         Settings, convert_file, export_response,
+                         Settings, convert_file, export_response, make_room,
                          upload_path as _scan_path)
 
 
@@ -34,6 +34,7 @@ STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
 app = FastAPI(title="dxf-converter", version=__version__)
 app.include_router(accounts.router)
+app.include_router(oidc.router)
 app.include_router(admin_api.router)
 app.include_router(scans.router)
 
@@ -67,6 +68,7 @@ async def upload(file: UploadFile = File(...)):
     if len(data) > MAX_BYTES:
         raise HTTPException(413, "file too large (60 MB max)")
 
+    make_room(len(data))
     upload_id = uuid.uuid4().hex
     folder = os.path.join(WORKDIR, upload_id)
     os.makedirs(folder, exist_ok=True)

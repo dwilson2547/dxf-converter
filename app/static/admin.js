@@ -23,8 +23,10 @@ function adminShell() {
         <tbody id="adminBody"></tbody>
       </table>
       <p class="empty" id="adminEmpty" hidden></p>
-      <p class="hint">Sign-up is ${API.status.signup ? 'on' : 'off'} — set <code>ALLOW_SIGNUP</code>
-        in the deployment to change it. New admins: make an existing user an admin here.</p>
+      <p class="hint">People sign in with their danwils account (authentik); an account appears
+        here at its first sign-in. Admins are the members of the <code>dxf-converter-admins</code>
+        group in authentik, read at each sign-in — after changing someone's groups, use
+        <b>Sign out</b> so it applies now rather than when their session lapses.</p>
     </div>`;
   $('adminSearch').addEventListener('input', renderAdmin);
 }
@@ -59,15 +61,14 @@ function renderAdmin() {
   for (const u of rows) {
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><b>${escapeHtml(u.username)}</b>${u.you ? ' <span class="tag">you</span>' : ''}</td>
+      <td><b>${escapeHtml(u.username)}</b>${u.you ? ' <span class="tag">you</span>' : ''}${u.unclaimed
+        ? ' <span class="tag" title="From before sign-in moved to authentik; claimed by the authentik user with this username at their first sign-in">not yet claimed</span>' : ''}</td>
       <td>${u.is_admin ? '<span class="badge">admin</span>' : '<span class="muted">user</span>'}</td>
       <td>${new Date(u.created_at).toLocaleDateString()}</td>
       <td class="num">${u.scans}</td>
       <td class="num">${u.versions}</td>
       <td class="actions">
-        <button class="ghost small" data-act="role" ${u.you ? 'disabled title="You can\'t change your own role"' : ''}>
-          ${u.is_admin ? 'Remove admin' : 'Make admin'}</button>
-        <button class="ghost small" data-act="reset" ${u.you ? 'disabled title="Use Account → Change password"' : ''}>Reset password</button>
+        <button class="ghost small" data-act="signout" ${u.you ? 'disabled title="Use Account → Sign out everywhere"' : ''}>Sign out</button>
         <button class="danger small" data-act="content" ${u.scans ? '' : 'disabled title="Nothing saved"'}>Delete content</button>
         <button class="danger small" data-act="delete" ${u.you ? 'disabled title="Use Account → Delete account"' : ''}>Delete user</button>
         <div class="error-strip" hidden></div>
@@ -75,8 +76,7 @@ function renderAdmin() {
     const err = tr.querySelector('.error-strip');
     const fail = (e) => { err.textContent = e.message; err.hidden = false; };
     const on = (act, fn) => { tr.querySelector(`[data-act=${act}]`).onclick = () => { err.hidden = true; fn().catch(fail); }; };
-    on('role', () => toggleRole(u));
-    on('reset', () => resetPassword(u));
+    on('signout', () => signOutUser(u));
     on('content', () => deleteContent(u));
     on('delete', () => deleteUser(u));
     body.appendChild(tr);
@@ -85,47 +85,15 @@ function renderAdmin() {
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-async function toggleRole(u) {
-  const make = !u.is_admin;
+async function signOutUser(u) {
   if (!(await confirmDialog({
-    title: make ? `Make ${u.username} an admin?` : `Remove ${u.username}'s admin role?`,
-    body: make ? 'Admins can see every user, reset passwords and delete accounts and content.'
-      : `${escapeHtml(u.username)} keeps their account and scans but loses the admin panel.`,
-    confirmLabel: make ? 'Make admin' : 'Remove admin',
+    title: `Sign ${u.username} out everywhere?`,
+    body: `Every session ${escapeHtml(u.username)} has ends now. Signing in again goes through `
+      + 'authentik, which also applies any change to their groups.',
+    confirmLabel: 'Sign out',
   }))) return;
-  const res = await api(`/api/admin/users/${u.id}`, { method: 'PATCH', auth: true, json: { is_admin: make } });
-  u.is_admin = res.is_admin;
-  renderAdmin();
-  toast(make ? `${u.username} is now an admin` : `${u.username} is no longer an admin`);
-}
-
-async function resetPassword(u) {
-  if (!(await confirmDialog({
-    title: `Reset ${u.username}'s password?`,
-    body: `${escapeHtml(u.username)} gets a new generated password and is signed out everywhere. `
-      + "You'll see the password once, to pass on.",
-    confirmLabel: 'Reset password',
-  }))) return;
-  const res = await api(`/api/admin/users/${u.id}/password`, { method: 'POST', auth: true });
-  const body = document.createElement('div');
-  body.innerHTML = `
-    <p>New password for <b>${escapeHtml(res.username)}</b>. It isn't stored anywhere you can
-      see it again — copy it now.</p>
-    <div class="secret"><code id="newPw"></code><button class="ghost small" type="button" id="copyPw">Copy</button></div>`;
-  body.querySelector('#newPw').textContent = res.password;
-  body.querySelector('#copyPw').onclick = async () => {
-    try {
-      await navigator.clipboard.writeText(res.password);
-      body.querySelector('#copyPw').textContent = 'Copied';
-    } catch (_) {
-      const range = document.createRange();
-      range.selectNodeContents(body.querySelector('#newPw'));
-      const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
-      body.querySelector('#copyPw').textContent = 'Selected — press Ctrl+C';
-    }
-  };
-  await openDialog({ title: 'Password reset', body,
-    actions: [{ label: 'Done', kind: 'primary', value: true }] });
+  const res = await api(`/api/admin/users/${u.id}/logout`, { method: 'POST', auth: true });
+  toast(`Signed ${res.username} out (${plural(res.sessions, 'session')})`);
 }
 
 async function deleteContent(u) {

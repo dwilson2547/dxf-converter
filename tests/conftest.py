@@ -100,7 +100,6 @@ def store(store_cfg):
     from app import accounts
     from app.store import StoreConfig
     st = accounts.configure(store_cfg)
-    accounts._fails.clear()
     yield st
     st.db.engine.dispose()
     accounts.configure(StoreConfig.from_env({}))

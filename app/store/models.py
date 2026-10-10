@@ -3,7 +3,8 @@
 Created from these models on first start (Base.metadata.create_all). There is
 no Alembic yet, deliberately: the schema is still settling and there is no
 data to preserve. The first schema change after real scans exist introduces
-Alembic with a baseline of this schema.
+Alembic with a baseline of this schema. (3.0.0 only added a table, which
+create_all handles on a live database; altering an existing table would not.)
 """
 
 from __future__ import annotations
@@ -33,12 +34,19 @@ class Base(DeclarativeBase):
 
 
 class User(Base):
+    """A local account. Sign-in is through authentik (oidc.py); this row holds
+    what the app owns: the scans, and the admin flag copied from authentik's
+    groups at each sign-in."""
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
     username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     """Stored lower-case: usernames are case-insensitive."""
-    password_hash: Mapped[str] = mapped_column(String(255))
+    password_hash: Mapped[str] = mapped_column(String(255), default="")
+    """Unused since 3.0.0 (no password login). Empty for accounts created by
+    sign-in; an argon2 hash marks an account from before 3.0.0 that has not
+    been claimed through authentik yet (see oidc.resolve_user). Kept, not
+    dropped, so the change needs no ALTER on a live table."""
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -46,6 +54,24 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     scans: Mapped[list["Scan"]] = relationship(
         back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
+    identities: Mapped[list["UserIdentity"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
+
+
+class UserIdentity(Base):
+    """Links an authentik identity (issuer + sub) to a local user. A new
+    table, so create_all adds it to an existing database by itself."""
+    __tablename__ = "user_identities"
+    __table_args__ = (UniqueConstraint("issuer", "subject"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    issuer: Mapped[str] = mapped_column(String(255))
+    subject: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    user: Mapped[User] = relationship(back_populates="identities")
 
 
 class AuthToken(Base):

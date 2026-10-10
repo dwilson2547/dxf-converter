@@ -6,8 +6,10 @@ saved scan converts and exports exactly as an anonymous upload does.
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 import threading
+import time
 
 import numpy as np
 from fastapi import HTTPException
@@ -24,6 +26,16 @@ MAX_BYTES = 60 * 1024 * 1024
 # 1 GB; the editor can fire a second request (eyedropper, Re-detect) before the
 # first finishes, and two at once is what got the pod OOM-killed.
 CONVERT_LOCK = threading.Lock()
+# A queued conversion gives up after this long rather than piling up threads
+# behind a busy one; the public site would otherwise let anyone stack them.
+CONVERT_WAIT_S = float(os.environ.get("CONVERT_WAIT_S") or 60)
+
+# The temp area (an emptyDir with a 2 Gi limit in the cluster; exceeding it
+# gets the pod evicted). Uploads idle longer than UPLOAD_TTL_S are removed, and
+# the oldest go first when a new one would push the total past the budget.
+UPLOAD_TTL_S = float(os.environ.get("UPLOAD_TTL_S") or 6 * 3600)
+WORKDIR_BUDGET = int(os.environ.get("WORKDIR_BUDGET_MB") or 1536) * 1024 * 1024
+_room_lock = threading.Lock()
 
 
 class Settings(BaseModel):
@@ -76,19 +88,75 @@ def upload_path(upload_id: str) -> str:
     folder = os.path.join(WORKDIR, upload_id)
     if not os.path.isdir(folder):
         raise HTTPException(404, "Upload not found — re-upload the file.")
+    try:
+        os.utime(folder)                # in use: keep it from expiring
+    except OSError:
+        pass
     for name in os.listdir(folder):
         if name.startswith("scan"):
             return os.path.join(folder, name)
     raise HTTPException(404, "Upload not found — re-upload the file.")
 
 
+def _cache_dirs() -> list[tuple[float, int, str]]:
+    """(mtime, bytes, path) for each anonymous upload and saved-scan cache.
+    Export dirs are left alone: they live for one response."""
+    out = []
+    roots = [WORKDIR, os.path.join(WORKDIR, "saved")]
+    for root in roots:
+        try:
+            names = os.listdir(root)
+        except FileNotFoundError:
+            continue
+        for name in names:
+            path = os.path.join(root, name)
+            if not name.isalnum() or not os.path.isdir(path):
+                continue
+            size = 0
+            for dirpath, _, files in os.walk(path):
+                for f in files:
+                    try:
+                        size += os.path.getsize(os.path.join(dirpath, f))
+                    except OSError:
+                        pass
+            try:
+                out.append((os.path.getmtime(path), size, path))
+            except OSError:
+                pass
+    return out
+
+
+def make_room(nbytes: int) -> None:
+    """Drop expired uploads, then the oldest, until nbytes more fit in the
+    budget. 503 if it still can't fit."""
+    with _room_lock:
+        now = time.time()
+        dirs = []
+        for mtime, size, path in _cache_dirs():
+            if now - mtime > UPLOAD_TTL_S:
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                dirs.append((mtime, size, path))
+        total = sum(size for _, size, _ in dirs)
+        for _, size, path in sorted(dirs):
+            if total + nbytes <= WORKDIR_BUDGET:
+                break
+            shutil.rmtree(path, ignore_errors=True)
+            total -= size
+        if total + nbytes > WORKDIR_BUDGET:
+            raise HTTPException(503, "The server is out of room for uploads — try again later.")
+
+
 def convert_file(src: str, settings: Settings) -> dict:
     """Run the pipeline on a local image and shape the editor's response."""
+    if not CONVERT_LOCK.acquire(timeout=CONVERT_WAIT_S):
+        raise HTTPException(503, "The converter is busy — try again in a minute.")
     try:
-        with CONVERT_LOCK:
-            paths_mm, _, _, page, report = extract(src, settings.to_config())
+        paths_mm, _, _, page, report = extract(src, settings.to_config())
     except Exception as exc:                       # noqa: BLE001
         raise HTTPException(422, f"Conversion failed: {exc}") from exc
+    finally:
+        CONVERT_LOCK.release()
 
     rejects = [r for r in report["preprocess"].get("rejects", [])]
     px_per_mm = report["preprocess"]["px_per_mm"] / settings.scale
@@ -132,7 +200,6 @@ def export_response(req: ExportRequest):
     """Write the DXF into a fresh temp dir and send it; the dir is removed
     once the response has gone out. Needs nothing but the posted paths, so a
     server restart can't stop anyone downloading what's in their editor."""
-    import shutil
     from fastapi.responses import FileResponse
     from starlette.background import BackgroundTask
     os.makedirs(WORKDIR, exist_ok=True)

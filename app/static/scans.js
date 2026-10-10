@@ -31,7 +31,7 @@ function setSaveState() {
 /* ---------- save ---------- */
 
 async function save() {
-  if (!(await requireLogin('Log in or sign up to save your work. Your edits stay as they are.'))) return;
+  if (!(await requireLogin('Sign in to save your work. Your edits stay as they are.'))) return;
   if (S.scan) return saveVersion();        // workflow 6
   return saveNewScan();
 }
