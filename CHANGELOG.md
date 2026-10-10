@@ -4,6 +4,29 @@ Each release is a git tag `vX.Y.Z` and a Docker image `dwilson2547/dxf-converter
 (`:latest` points at the newest release). The cluster runs the version pinned in
 `helm/dxf-converter/values.yaml` — bump `image.tag` there to roll out a release.
 
+## 3.0.0 — 2026-10-10
+
+### Breaking
+- **Sign-in is authentik (OIDC) only.** Log in, sign up, passwords, change/reset password and
+  `ALLOW_SIGNUP` are gone, along with the `init-admin`, `add-user` and `set-password` commands.
+  The first sign-in creates the account, or claims a pre-3.0 account with the same username
+  once. Sign-in runs in a popup so an open edit survives (falls back to a full-page redirect).
+- **Admin is the authentik group `dxf-converter-admins`**, synced at each sign-in; the make/remove
+  admin action is gone. Sessions last 7 days (was 30) so a group change takes effect within a week.
+- Needs `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` and `PUBLIC_URL`; without them the
+  app runs anonymous-only.
+
+### Added
+- Public at https://dxf-converter.danwils.com (was LAN-only `dxf-converter.local`).
+- **Sign out everywhere** (Account) and **Sign out** a user (Admin, and `app.admin sign-out`).
+- `app.admin rename-user` and an "unclaimed" marker on pre-3.0 accounts.
+
+### Changed
+- Anonymous load is bounded: a conversion waits at most `CONVERT_WAIT_S` (60 s) for the one
+  running before a 503, and uploads idle longer than `UPLOAD_TTL_S` (6 h) are removed, oldest
+  first, to keep the work dir under `WORKDIR_BUDGET_MB` (1536).
+- Deleting your account asks you to type your username instead of your password.
+
 ## 2.0.1 — 2026-10-02
 
 ### Fixed

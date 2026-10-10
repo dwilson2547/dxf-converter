@@ -14,6 +14,10 @@ spec:
       labels:
         app: {{ .Release.Name }}
     spec:
+      {{- with .Values.oidc.hostAliases }}
+      hostAliases:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: dxf-converter
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -43,8 +47,19 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.accounts.s3.credentialsSecret }}
                   key: S3_SECRET_KEY
-            - name: ALLOW_SIGNUP
-              value: {{ .Values.accounts.allowSignup | quote }}
+            - name: PUBLIC_URL
+              value: "https://{{ .Values.ingress.host }}"
+            - name: OIDC_ISSUER
+              value: {{ .Values.oidc.issuer | quote }}
+            - name: OIDC_CLIENT_ID
+              value: {{ .Values.oidc.clientId | quote }}
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oidc.secretName }}
+                  key: client_secret
+            - name: OIDC_ADMIN_GROUP
+              value: {{ .Values.oidc.adminGroup | quote }}
           {{- end }}
           readinessProbe:
             httpGet:

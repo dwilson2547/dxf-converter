@@ -29,8 +29,10 @@ it asks first, and **Undo** brings the previous paths back.
 
 ### Accounts and saved scans
 
-When the server has a database and image storage configured (see *Cluster deploy*), the top bar
-offers **Log in** / **Sign up**. Logged in:
+Anyone can upload, edit and download without an account. When the server has a database, image
+storage and an authentik OIDC client configured (see *Cluster deploy*), the top bar offers
+**Sign in**, which goes through authentik (Google) in a popup so an open edit isn't lost; there
+are no local passwords. Your first sign-in creates your account. Signed in:
 
 - **Save** in the editor stores the image and your current geometry as a scan; **Save version**
   adds a numbered version (label, note) — nothing is overwritten.
@@ -38,9 +40,10 @@ offers **Log in** / **Sign up**. Logged in:
   off, rename or delete it.
 - The **Versions** panel loads, labels or deletes versions, and **Compare** overlays another
   version (dashed, flip with **B**) with a table of what changed.
-- **Account** (your name, top right) changes your password or deletes your account; admins also
-  get **Admin**: users with their saved content, reset password, make/remove admin, delete
-  content or users.
+- **Account** (your name, top right) signs out everywhere or deletes your account. Admin is the
+  authentik group `dxf-converter-admins`, synced at each sign-in (sessions last 7 days, so a
+  removal takes effect at the latest then, or at once via **Admin → Sign out**). Admins get
+  **Admin**: users with their saved content, sign a user out, delete content or users.
 
 Without a database the tool works exactly as before: upload, edit, download, nothing kept.
 
@@ -213,7 +216,7 @@ and removes it.
 
 ## Cluster deploy
 
-Runs on the home cluster at http://dxf-converter.local via ArgoCD
+Runs publicly at https://dxf-converter.danwils.com via ArgoCD
 (`infra/cluster-config/argocd/dxf-converter.yaml`, chart `helm/dxf-converter/`, namespace
 `dxf-converter`). The chart pins a release: `image.tag` in `helm/dxf-converter/values.yaml`.
 
@@ -230,26 +233,37 @@ docker push dwilson2547/dxf-converter:X.Y.Z && docker push dwilson2547/dxf-conve
 git tag -a vX.Y.Z -m "X.Y.Z" && git push && git push --tags
 ```
 
-Accounts and saved scans need two secrets in the `dxf-converter` namespace, applied by hand
+Accounts and saved scans need three secrets in the `dxf-converter` namespace, applied by hand
 (templates in `infra/cluster-config/example-secrets/dxf-converter/secret.yml`):
-`dxf-converter-db` (`DATABASE_URL` for the `dxfconv` database on the cluster postgres) and
-`dxf-converter-bucket-credentials` (`S3_ACCESS_KEY`, `S3_SECRET_KEY`). The endpoint, bucket and
-`allowSignup` are chart values under `accounts`. Tables are created on first start. Create the
-first admin once, after the first 2.x rollout:
+`dxf-converter-db` (`DATABASE_URL` for the `dxfconv` database on the cluster postgres),
+`dxf-converter-bucket-credentials` (`S3_ACCESS_KEY`, `S3_SECRET_KEY`) and `dxf-converter-oidc`
+(`client_secret`, the same value as `authentik-dxf-converter-oidc` in the `authentik` namespace,
+which the blueprint `infra/cluster-config/authentik/blueprints/dxf-converter.yaml` reads). The
+endpoint, bucket and OIDC issuer/client/group are chart values. Tables are created on first start.
+Admins are whoever is in the authentik group `dxf-converter-admins`.
+
+Without `OIDC_ISSUER`/`OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET`/`PUBLIC_URL` the Sign in button is
+hidden and the app is anonymous-only (local runs). Other knobs: `TOKEN_TTL_DAYS` (7),
+`CONVERT_WAIT_S` (60, then 503 while another conversion runs), `UPLOAD_TTL_S` (6 h idle before
+an upload is cleaned up) and `WORKDIR_BUDGET_MB` (1536, under the 2 Gi `emptyDir`).
+
+Pre-3.0 password accounts are claimed by the first authentik sign-in with the same username
+(authentik's `preferred_username`, lowercased). Rename one first if the names differ:
 
 ```
-kubectl -n dxf-converter exec deploy/dxf-converter -- python3 -m app.admin init-admin --username <name>
+kubectl -n dxf-converter exec deploy/dxf-converter -- python3 -m app.admin list-users
+kubectl -n dxf-converter exec deploy/dxf-converter -- python3 -m app.admin rename-user OLD NEW
 kubectl -n dxf-converter exec deploy/dxf-converter -- python3 -m app.admin check
 ```
 
 Argo polls every few minutes; to roll out now:
 `kubectl -n argocd annotate app dxf-converter argocd.argoproj.io/refresh=hard --overwrite`.
-Check what's running with `curl http://dxf-converter.local/api/version`.
+Check what's running with `curl https://dxf-converter.danwils.com/api/version`.
 
 ## Status
 
-2.0.1: accounts, saved scans with versions and compare, admin panel; scan and photo modes;
-120 tests passing (plus one opt-in test against the real bucket); deployed to the cluster.
+3.0.0: public, with authentik sign-in; saved scans with versions and compare, admin panel; scan
+and photo modes; 135 tests passing (plus one opt-in test against the real bucket).
 
 Nothing persists across a restart — uploads live in a temp directory (an `emptyDir` in the
 cluster) keyed by id. That pins the deployment to one replica; a restart just means re-uploading
